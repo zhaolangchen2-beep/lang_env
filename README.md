@@ -1,80 +1,81 @@
-lang_env自动化环境部署与测试框架
-lang_env是一个专为Python生态项目设计的自动化Docker环境部署与基准测试框架。
+lang_env 自动化环境部署与测试框架
+lang_env 是一个专为 Python 生态项目设计的自动化 Docker 环境部署与基准测试框架。
 
 🚀 核心特性
-架构自适应 (Arch-Aware)： 自动识别 x86_64 / aarch64 架构，精准匹配华为云或官方镜像源。
+架构自适应 (Arch-Aware) 自动识别 x86_64 / aarch64 架构，精准匹配华为云或官方镜像源，无需手动切换。
 
-容器化预编译： Python编译在隔离容器中完成并保存产物在主机，各模块部署镜像时直接取用产物，保证测试一致性，并节省编译时间
+容器化预编译 Python 编译过程在隔离容器中完成，产物持久化保存在主机。各业务模块部署时直接挂载或复制产物，确保测试环境一致性并大幅节省重复编译时间。
 
-参数化优化： 通过 conf.yaml 注入Python版本、编译参数、代理等配置
+参数化优化 通过 conf.yaml 统一注入 Python 版本、编译参数（如 PGO/LTO）、网络代理等配置。
 
-解耦设计： 主框架只负责“基础设施”，具体的业务逻辑封装在子模块中。
+解耦设计 主框架只负责“基础设施”（网络、基础镜像、Python环境），具体的业务逻辑（Spark/Flink等）完全封装在子模块中。
 
 📂 项目目录结构
 Plaintext
 lang_test/
-├── conf.yaml          # 全局配置中心（代理、Docker版本、编译参数）
-├── url.yaml           # 资源索引（Python源码、基础镜像、组件包链接）
-├── tmp/               # 资源池（存放下载包及预编译的 Python 产物）
-├── deploy.sh          # 【主入口】环境部署脚本
-├── test.sh            # 【主入口】测试驱动脚本 
-├── out/               # 测试结果转储（日志、性能数据、SVG图表）
-└── sub_modules/       # 子模块
+├── conf.yaml           # 全局配置中心（代理、Docker版本、编译参数）
+├── url.yaml            # 资源索引（Python源码、基础镜像、组件包链接）
+├── tmp/                # 资源池（存放下载包及预编译的 Python 产物）
+├── deploy.sh           # 【主入口】环境部署脚本
+├── test.sh             # 【主入口】测试驱动脚本
+├── out/                # 测试结果转储（日志、性能数据、SVG图表）
+└── sub_modules/        # 子模块目录
     ├── dependency.yaml # 模块私有依赖定义
     ├── Dockerfile      # 镜像构建文件
     ├── start.sh        # 集群/容器拉起逻辑
     └── test.sh         # 模块特有的 benchmark 逻辑
-
 🛠️ 快速开始
 1. 配置全局变量
-在 conf.yaml 中设置你的代理和目标 Python 版本：
+修改 conf.yaml 文件，设置代理、Docker 版本要求及目标 Python 版本：
 
+YAML
 global:
-  proxy: "http://90.91.56.202:3128"                     # 为主机执行时配置代理，并且构建镜像时作为参数配置
-  docker_min_version: "26.1.3"                          # 最低docker版本，如果不满足则会配置yum源并尝试安装该版本
-  base_os_image: "openeuler-24.03-lts-sp1:latest"       # 基础OS镜像
+  # 为主机执行时配置代理，并且构建镜像时作为参数传递
+  proxy: "http://90.91.56.202:3128"
+  # 最低 docker 版本，如果不满足则会配置 yum 源并尝试升级
+  docker_min_version: "26.1.3"
+  # 基础 OS 镜像
+  base_os_image: "openeuler-24.03-lts-sp1:latest"
 
 python_build:
   # 允许测试的 Python 版本列表
   supported_versions:
-      - "3.14.2"
+    - "3.14.2"
   # 预编译参数，用于 deploy.sh 生成通用 Python
   cflags: "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
   ldflags: ""
   configure_args: "--enable-optimizations --with-lto"
   install_dir: "/tmp/lang_test/python_dist"
-
 2. 一键部署
-执行部署脚本
+使用 deploy.sh 脚本进行环境构建与部署：
 
 Bash
 # 用法: ./deploy.sh <子模块名> <Python版本>
 ./deploy.sh pyflink 3.14.2
+执行逻辑：
 
-会根据子模块的Dockerfile构建名为 pyflink:3.14.2的镜像
-构建成功后会调用子模块的start.sh，从镜像拉起容器或集群
+根据 pyflink 子模块的 Dockerfile 构建名为 pyflink:3.14.2 的镜像。
 
-3. 执行测试
- (TODO)
-部署，启动自动化测试并获取转储结果：
+构建成功后，自动调用子模块的 start.sh。
+
+从生成的镜像拉起容器或集群。
+
+3. 执行测试 (TODO)
+部署完成后，启动自动化测试并获取转储结果：
 
 Bash
 # 用法: ./test.sh -m <子模块名> -v <Python版本> [--redeploy]
 ./test.sh -m pyflink -v 3.14.2 --redeploy
-
-
-⚠️ 新增子模块
- sub_modules/           # 子模块
-    ├── dependency.yaml # 模块私有依赖定义
-    ├── Dockerfile      # 镜像构建文件
-    ├── start.sh        # 集群/容器拉起逻辑
-    └── test.sh         # 模块特有的 benchmark 逻辑
+⚠️ 新增子模块指南
+若需添加新的测试模块（如 datajuicer），请在 sub_modules/ 下创建新目录，并包含以下文件：
 
 1. dependency.yaml
-构建过程需要依赖的所有软件包名称写在 dependency.yaml中，并在url.yaml中配置获取链接
+定义构建过程需要依赖的所有软件包名称，具体下载链接需在根目录的 url.yaml 中配置。
 
-2. Dockerfile
-—— 使用参数配置基础镜像和代理参考：
+2. Dockerfile 参考模板
+基础配置与网络代理：
+
+Dockerfile
 # 配置基础镜像
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
@@ -94,44 +95,47 @@ RUN echo "sslverify=false" >> /etc/yum.conf && \
     echo "export http_proxy=\"${PROXY}\"" >> /etc/profile.d/proxy.sh && \
     echo "export https_proxy=\"${PROXY}\"" >> /etc/profile.d/proxy.sh && \
     chmod +x /etc/profile.d/proxy.sh
+注入预编译 Python：
 
-—— 使用预编译的Python参考：
+Dockerfile
 # ================== 3. 注入 Python (核心逻辑) ==================
 # 从构建上下文 (主目录/tmp) 复制预编译 Python
 COPY ./tmp/python_versions/${PYTHON_VERSION} /usr/local/python
+
+# 建立软链接
 RUN ln -s /usr/local/python/bin/python3 /usr/local/bin/python && \
     ln -s /usr/local/python/bin/pip3 /usr/local/bin/pip
 
 # 配置 Python 环境变量
 ENV PATH="/usr/local/python/bin:$PATH"
+
 # 注意：如果 yum 报错，请注释掉下面这行 LD_LIBRARY_PATH
 ENV LD_LIBRARY_PATH="/usr/local/python/lib:$LD_LIBRARY_PATH"
 
-Pip 路径失效问题： 统一使用 python3 -m pip。
-
-—— 配置pip国际源
 # 配置 Pip 国内源
 RUN mkdir -p ~/.pip && \
     echo "[global]" > ~/.pip/pip.conf && \
     echo "index-url = https://pypi.tuna.tsinghua.edu.cn/simple" >> ~/.pip/pip.conf && \
     echo "trusted-host = pypi.tuna.tsinghua.edu.cn" >> ~/.pip/pip.conf
 
-3. start.sh 
-脚本需要接受镜像名作为参数，按照该模块需要，执行从镜像拉起容器或集群：
-./start.sh pyspark:3.14.2
+# ⚠️ 注意：Pip 路径在某些环境下可能失效，建议统一使用 python3 -m pip
+3. start.sh
+脚本需接受镜像名作为参数，执行从镜像拉起容器或集群的逻辑：
 
+Bash
+#!/bin/bash
+IMAGE_NAME=$1
+# 示例：docker run -d --name my_app $IMAGE_NAME
 4. test.sh
-//TODO
+(TODO: 定义模块特有的 Benchmark 逻辑)
 
-
-     
 📋 待办事项 (TODO)
-1. 子模块：datajuicer\cpython\numpy\pandas
+[ ] 扩展子模块：集成 datajuicer、cpython、numpy、pandas。
 
-2. 测试模块：支持上机一键出结果
+[ ] 测试流程：完善 test.sh，支持上机一键出结果。
 
-3. 预编译Python JIT依赖LLVM：支持conf配置JIT时获取LLVM
+[ ] JIT 支持：预编译 Python 支持配置 JIT 选项，并自动处理 LLVM 依赖。
 
-4. 支持预编译模式开关：关掉时每个子模块单独编译Python，方便开发人员自己在容器编译调试
+[ ] 编译模式开关：支持关闭预编译模式，允许开发人员在子模块容器内单独编译 Python 以便调试。
 
-5. 确认yum安装的软件能否分享。
+[ ] Yum 缓存共享：确认并实现 yum 安装包在不同模块间的共享/复用机制。
