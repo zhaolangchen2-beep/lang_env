@@ -1,0 +1,22 @@
+urls:
+  software:
+    # Spark 官方下载（示例链接）
+    spark-4.1.0-bin-hadoop3.tgz: "https://archive.apache.org/dist/spark/spark-4.1.0/spark-4.1.0-bin-hadoop3.tgz"
+    # PySpark 源码包或 Wheel
+    pyspark-4.1.0.tar.gz: "https://files.pythonhosted.org/packages/source/p/pyspark/pyspark-4.1.0.tar.gz"
+
+    apache-arrow-16.1.0.tar.gz: "https://repo.huaweicloud.com/artifactory/apache-local/arrow/arrow-16.1.0/apache-arrow-16.1.0.tar.gz"
+    flink-2.2.0-bin-scala_2.12.tgz: "https://archive.apache.org/dist/flink/flink-2.2.0/flink-2.2.0-bin-scala_2.12.tgz"
+  software_x86:
+
+  software_aarch64:
+
+  base_images_x86:
+    openEuler-docker.x86_64.tar.xz: "https://mirrors.tools.huawei.com/openeuler/openEuler-24.03-LTS-SP1/docker_img/x86_64/openEuler-docker.x86_64.tar.xz"
+  base_images_aarch64:
+    openEuler-docker.aarch64.tar.xz: "https://mirrors.tools.huawei.com/openeuler/openEuler-24.03-LTS-SP1/docker_img/aarch64/openEuler-docker.aarch64.tar.xz"
+
+  python_sources:
+    3.11.0: "https://www.python.org/ftp/python/3.11.0/Python-3.11.0.tgz"
+    3.12.0: "https://www.python.org/ftp/python/3.12.0/Python-3.12.0.tgz"
+    3.14.2: "https://www.python.org/ftp/python/3.14.2/Python-3.14.2.tgz"

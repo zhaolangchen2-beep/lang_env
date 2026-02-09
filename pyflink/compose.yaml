@@ -1,0 +1,62 @@
+version: "3"
+services:
+  jobmanager:
+    image: ${IMAGE_NAME}
+    container_name: pyflink-jobmanager
+    hostname: jobmanager
+    ports:
+      - "28081:8081"
+      - "6123:6123"
+    command: >
+      /bin/bash -c "
+      mkdir -p /tmp/flink-conf &&
+      cp -r /opt/flink/conf/* /tmp/flink-conf/ 2>/dev/null || true &&
+      echo 'jobmanager.rpc.address: jobmanager' > /tmp/flink-conf/config.yaml &&
+      echo 'jobmanager.rpc.port: 6123' >> /tmp/flink-conf/config.yaml &&
+      echo 'jobmanager.bind-host: 0.0.0.0' >> /tmp/flink-conf/config.yaml &&
+      echo 'rest.address: 0.0.0.0' >> /tmp/flink-conf/config.yaml &&
+      echo 'rest.port: 8081' >> /tmp/flink-conf/config.yaml &&
+      echo 'rest.bind-address: 0.0.0.0' >> /tmp/flink-conf/config.yaml &&
+      echo 'taskmanager.bind-host: 0.0.0.0' >> /tmp/flink-conf/config.yaml &&
+      echo 'taskmanager.numberOfTaskSlots: 2' >> /tmp/flink-conf/config.yaml &&
+      echo 'jobmanager.memory.process.size: 1600m' >> /tmp/flink-conf/config.yaml &&
+      ln -sf /tmp/flink-conf/config.yaml /tmp/flink-conf/flink-conf.yaml &&
+      export FLINK_CONF_DIR=/tmp/flink-conf &&
+      echo 'Config generated successfully, starting JobManager...' &&
+      /opt/flink/bin/jobmanager.sh start-foreground"
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - flink-rescue-net
+    volumes:
+      # 映射代码目录：把本地的 py_code 映射到容器的 /opt/py_code
+      - ./py_code:/opt/py_code
+
+  taskmanager:
+    image: ${IMAGE_NAME}
+    container_name: pyflink-taskmanager
+    depends_on:
+      - jobmanager
+    command: >
+      /bin/bash -c "
+      mkdir -p /tmp/flink-conf &&
+      cp -r /opt/flink/conf/* /tmp/flink-conf/ 2>/dev/null || true &&
+      echo 'jobmanager.rpc.address: jobmanager' > /tmp/flink-conf/config.yaml &&
+      echo 'jobmanager.rpc.port: 6123' >> /tmp/flink-conf/config.yaml &&
+      echo 'jobmanager.bind-host: 0.0.0.0' >> /tmp/flink-conf/config.yaml &&
+      echo 'taskmanager.bind-host: 0.0.0.0' >> /tmp/flink-conf/config.yaml &&
+      echo 'taskmanager.host: pyflink-taskmanager' >> /tmp/flink-conf/config.yaml &&
+      echo 'taskmanager.numberOfTaskSlots: 2' >> /tmp/flink-conf/config.yaml &&
+      echo 'taskmanager.memory.process.size: 1728m' >> /tmp/flink-conf/config.yaml &&
+      ln -sf /tmp/flink-conf/config.yaml /tmp/flink-conf/flink-conf.yaml &&
+      export FLINK_CONF_DIR=/tmp/flink-conf &&
+      echo 'Config generated successfully, starting TaskManager...' &&
+      /opt/flink/bin/taskmanager.sh start-foreground"
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - flink-rescue-net
+
+networks:
+  flink-rescue-net:
+    driver: bridge

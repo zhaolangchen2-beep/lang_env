@@ -1,0 +1,185 @@
+# docker-compose.yml
+version: '3.8'
+
+# 定义网络
+networks:
+  spark-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+          gateway: 172.30.0.1
+
+# 共享配置
+x-spark-base: &spark-base
+  image: ${IMAGE_NAME}
+  restart: unless-stopped
+  cap_add:
+    - SYS_PTRACE
+  privileged: true
+  networks:
+    spark-network:
+  volumes:
+    - ./data:/opt/spark/data
+    - ./logs:/opt/spark/logs
+    - ./apps:/opt/spark/apps
+    - ./configs/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+    - ./configs/spark-env.sh:/opt/spark/conf/spark-env.sh
+  environment:
+    # Java环境
+    - JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+    
+    # 解决Web UI链接问题
+    - SPARK_PUBLIC_DNS=${HOST_IP}
+    - HOST_IP=${HOST_IP}
+    
+    # 通用Spark配置
+    - SPARK_HOME=/opt/spark
+    - SPARK_LOG_DIR=/opt/spark/logs
+    - SPARK_WORKER_DIR=/opt/spark/work
+
+services:
+  # Spark Master节点
+  spark-master:
+    <<: *spark-base
+    container_name: spark-master
+    hostname: spark-master
+    ports:
+      - "8080:8080"    # Master Web UI
+      - "7077:7077"    # Master通信端口
+      - "4040:4040"    # 第一个应用的Web UI
+    environment:
+      # Master特定配置
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
+      - SPARK_MASTER_OPTS=-Dspark.ui.reverseProxy=true -Dspark.ui.reverseProxyUrl=http://${HOST_IP}:8080 -Dspark.ui.proxy.base.urls=spark://spark-master:7077
+    command: |
+      bash -c "
+      # 创建必要的目录
+      mkdir -p /opt/spark/logs /opt/spark/work
+      
+      # 设置正确的环境变量
+      source /opt/spark/conf/spark-env.sh
+      
+      # 启动Master
+      echo '🚀 Starting Spark Master...'
+      echo 'Host: spark-master'
+      echo 'Port: 7077'
+      echo 'Web UI: http://${HOST_IP}:8080'
+      
+      /opt/spark/sbin/start-master.sh --host spark-master --port 7077 --webui-port 8080
+      
+      # 等待启动完成并显示日志
+      echo '✅ Master started successfully!'
+      echo '==========================================='
+      echo 'Access Master Web UI: http://${HOST_IP}:8080'
+      echo 'Master URL: spark://${HOST_IP}:7077'
+      echo '==========================================='
+      
+      # 保持容器运行并显示日志
+      tail -f /opt/spark/logs/spark*.out
+      "
+    healthcheck:
+      test: "curl -f http://localhost:8080 || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Spark Worker节点 1
+  spark-worker-1:
+    <<: *spark-base
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    ports:
+      - "8081:8081"    # Worker 1 Web UI
+    environment:
+      # Worker特定配置
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=16g
+      - SPARK_WORKER_WEBUI_PORT=8081
+      - SPARK_WORKER_OPTS=-Dspark.ui.reverseProxy=true -Dspark.worker.ui.port=8081 -Dspark.worker.bindAddress=spark-worker-1 -Dspark.driver.bindAddress=spark-worker-1 -Dspark.driver.host=${HOST_IP} -Dspark.publicAddress=${HOST_IP}
+    command: |
+      bash -c "
+      # 创建必要的目录
+      mkdir -p /opt/spark/logs /opt/spark/work
+      
+      # 设置正确的环境变量
+      source /opt/spark/conf/spark-env.sh
+      
+      # 等待Master启动完成
+      echo '⏳ Waiting for Spark Master to be ready...'
+      sleep 20
+      
+      
+      # 启动Worker
+      echo '🚀 Starting Spark Worker 1...'
+      echo 'Master URL: spark://spark-master:7077'
+      echo 'Web UI: http://${HOST_IP}:8081'
+      
+      /opt/spark/sbin/start-worker.sh spark://spark-master:7077 --host spark-worker-1 --webui-port 8081 --cores 4 --memory 16g
+      
+      # 等待启动完成
+      echo '✅ Worker 1 started successfully!'
+      echo '==========================================='
+      echo 'Access Worker 1 Web UI: http://${HOST_IP}:8081'
+      echo '==========================================='
+      
+      # 保持容器运行并显示日志
+      tail -f /opt/spark/logs/spark*.out
+      "
+    depends_on:
+      - spark-master
+
+  # Spark Worker节点 2
+  spark-worker-2:
+    <<: *spark-base
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    ports:
+      - "8082:8082"    # Worker 2 Web UI
+    environment:
+      # Worker特定配置
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_CORES=4
+      - SPARK_WORKER_MEMORY=16g
+      - SPARK_WORKER_WEBUI_PORT=8082
+      - SPARK_WORKER_OPTS=-Dspark.ui.reverseProxy=true -Dspark.worker.ui.port=8082 -Dspark.worker.bindAddress=spark-worker-2 -Dspark.driver.bindAddress=spark-worker-2 -Dspark.driver.host=${HOST_IP} -Dspark.publicAddress=${HOST_IP}
+    command: |
+      bash -c "
+      # 创建必要的目录
+      mkdir -p /opt/spark/logs /opt/spark/work
+      
+      # 设置正确的环境变量
+      source /opt/spark/conf/spark-env.sh
+      
+      # 等待Master启动完成
+      echo '⏳ Waiting for Spark Master to be ready...'
+      sleep 25
+      
+      
+      # 启动Worker
+      echo '🚀 Starting Spark Worker 2...'
+      echo 'Master URL: spark://spark-master:7077'
+      echo 'Web UI: http://${HOST_IP}:8082'
+      
+      /opt/spark/sbin/start-worker.sh spark://spark-master:7077 --host spark-worker-2 --webui-port 8082 --cores 4 --memory 16g
+     
+ 
+      # 等待启动完成
+      echo '✅ Worker 2 started successfully!'
+      echo '==========================================='
+      echo 'Access Worker 2 Web UI: http://${HOST_IP}:8082'
+      echo '==========================================='
+      
+      # 保持容器运行并显示日志
+      tail -f /opt/spark/logs/spark*.out
+      "
+    depends_on:
+      - spark-master
+

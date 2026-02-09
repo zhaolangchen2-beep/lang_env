@@ -1,0 +1,32 @@
+# 子模块依赖描述
+module_info:
+  name: "pyspark_test_module"
+  version: "1.0.0"
+
+# 1. 软件下载依赖：deploy.sh 会检查 tmp/ 是否存在这些文件，不存在则去 url.yaml 找对应链接下载
+# 这里的 key 必须与 url.yaml 中的 key 对应
+software:
+  - "spark-4.1.0-bin-hadoop3.tgz"
+  - "pyspark-4.1.0.tar.gz"
+
+# 2. 系统级依赖：用于说明该模块需要的 YUM 软件包（供参考或自动化脚本扩展）
+system_packages:
+  - "java-17-openjdk-devel"
+  - "curl"
+  - "wget"
+  - "openssh-server"
+  - "rsync"
+  - "procps-ng"
+  - "net-tools"
+  - "bind-utils"
+  - "tar"
+  - "gzip"
+  - "sudo"
+
+# 3. Python 业务库依赖
+python_packages:
+  - "pandas"
+  - "pyarrow"
+
+# 4. 模块间依赖（预留功能）
+depends_on: []
