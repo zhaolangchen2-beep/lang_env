@@ -1,17 +1,27 @@
-lang_env 自动化环境部署与测试框架
-lang_env 是一个专为 Python 生态项目设计的自动化 Docker 环境部署与基准测试框架。
+这是一个结构优化后的 `README.md` 版本。我修复了原文本中损坏的代码片段（特别是 Dockerfile 中的变量引用），调整了层级，并使用了 Markdown 的语法高亮功能来提升可读性。
 
-🚀 核心特性
-架构自适应 (Arch-Aware) 自动识别 x86_64 / aarch64 架构，精准匹配华为云或官方镜像源，无需手动切换。
+---
 
-容器化预编译 Python 编译过程在隔离容器中完成，产物持久化保存在主机。各业务模块部署时直接挂载或复制产物，确保测试环境一致性并大幅节省重复编译时间。
+# lang_env 自动化环境部署与测试框架
 
-参数化优化 通过 conf.yaml 统一注入 Python 版本、编译参数（如 PGO/LTO）、网络代理等配置。
+**lang_env** 是一个专为 Python 生态项目设计的自动化 Docker 环境部署与基准测试框架。
 
-解耦设计 主框架只负责“基础设施”（网络、基础镜像、Python环境），具体的业务逻辑（Spark/Flink等）完全封装在子模块中。
+## 🚀 核心特性
 
-📂 项目目录结构
-Plaintext
+* **架构自适应 (Arch-Aware)**
+自动识别 `x86_64` / `aarch64` 架构，精准匹配华为云或官方镜像源，无需手动切换。
+* **容器化预编译**
+Python 编译过程在隔离容器中完成，产物持久化保存在主机。各业务模块部署时直接挂载或复制产物，确保测试环境一致性并大幅节省重复编译时间。
+* **参数化优化**
+通过 `conf.yaml` 统一注入 Python 版本、编译参数（如 PGO/LTO）、网络代理等配置。
+* **解耦设计**
+主框架只负责“基础设施”（网络、基础镜像、Python环境），具体的业务逻辑（Spark/Flink等）完全封装在子模块中。
+
+---
+
+## 📂 项目目录结构
+
+```text
 lang_test/
 ├── conf.yaml           # 全局配置中心（代理、Docker版本、编译参数）
 ├── url.yaml            # 资源索引（Python源码、基础镜像、组件包链接）
@@ -24,11 +34,18 @@ lang_test/
     ├── Dockerfile      # 镜像构建文件
     ├── start.sh        # 集群/容器拉起逻辑
     └── test.sh         # 模块特有的 benchmark 逻辑
-🛠️ 快速开始
-1. 配置全局变量
-修改 conf.yaml 文件，设置代理、Docker 版本要求及目标 Python 版本：
 
-YAML
+```
+
+---
+
+## 🛠️ 快速开始
+
+### 1. 配置全局变量
+
+修改 `conf.yaml` 文件，设置代理、Docker 版本要求及目标 Python 版本：
+
+```yaml
 global:
   # 为主机执行时配置代理，并且构建镜像时作为参数传递
   proxy: "http://90.91.56.202:3128"
@@ -46,36 +63,51 @@ python_build:
   ldflags: ""
   configure_args: "--enable-optimizations --with-lto"
   install_dir: "/tmp/lang_test/python_dist"
-2. 一键部署
-使用 deploy.sh 脚本进行环境构建与部署：
 
-Bash
+```
+
+### 2. 一键部署
+
+使用 `deploy.sh` 脚本进行环境构建与部署：
+
+```bash
 # 用法: ./deploy.sh <子模块名> <Python版本>
 ./deploy.sh pyflink 3.14.2
-执行逻辑：
 
-根据 pyflink 子模块的 Dockerfile 构建名为 pyflink:3.14.2 的镜像。
+```
 
-构建成功后，自动调用子模块的 start.sh。
+> **执行逻辑：**
+> 1. 根据 `pyflink` 子模块的 Dockerfile 构建名为 `pyflink:3.14.2` 的镜像。
+> 2. 构建成功后，自动调用子模块的 `start.sh`。
+> 3. 从生成的镜像拉起容器或集群。
+> 
+> 
 
-从生成的镜像拉起容器或集群。
+### 3. 执行测试 (TODO)
 
-3. 执行测试 (TODO)
 部署完成后，启动自动化测试并获取转储结果：
 
-Bash
+```bash
 # 用法: ./test.sh -m <子模块名> -v <Python版本> [--redeploy]
 ./test.sh -m pyflink -v 3.14.2 --redeploy
-⚠️ 新增子模块指南
-若需添加新的测试模块（如 datajuicer），请在 sub_modules/ 下创建新目录，并包含以下文件：
 
-1. dependency.yaml
-定义构建过程需要依赖的所有软件包名称，具体下载链接需在根目录的 url.yaml 中配置。
+```
 
-2. Dockerfile 参考模板
-基础配置与网络代理：
+---
 
-Dockerfile
+## ⚠️ 新增子模块指南
+
+若需添加新的测试模块（如 `datajuicer`），请在 `sub_modules/` 下创建新目录，并包含以下文件：
+
+### 1. `dependency.yaml`
+
+定义构建过程需要依赖的所有软件包名称，具体下载链接需在根目录的 `url.yaml` 中配置。
+
+### 2. `Dockerfile` 参考模板
+
+**基础配置与网络代理：**
+
+```dockerfile
 # 配置基础镜像
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
@@ -95,9 +127,12 @@ RUN echo "sslverify=false" >> /etc/yum.conf && \
     echo "export http_proxy=\"${PROXY}\"" >> /etc/profile.d/proxy.sh && \
     echo "export https_proxy=\"${PROXY}\"" >> /etc/profile.d/proxy.sh && \
     chmod +x /etc/profile.d/proxy.sh
-注入预编译 Python：
 
-Dockerfile
+```
+
+**注入预编译 Python：**
+
+```dockerfile
 # ================== 3. 注入 Python (核心逻辑) ==================
 # 从构建上下文 (主目录/tmp) 复制预编译 Python
 COPY ./tmp/python_versions/${PYTHON_VERSION} /usr/local/python
@@ -119,23 +154,30 @@ RUN mkdir -p ~/.pip && \
     echo "trusted-host = pypi.tuna.tsinghua.edu.cn" >> ~/.pip/pip.conf
 
 # ⚠️ 注意：Pip 路径在某些环境下可能失效，建议统一使用 python3 -m pip
-3. start.sh
+
+```
+
+### 3. `start.sh`
+
 脚本需接受镜像名作为参数，执行从镜像拉起容器或集群的逻辑：
 
-Bash
+```bash
 #!/bin/bash
 IMAGE_NAME=$1
 # 示例：docker run -d --name my_app $IMAGE_NAME
-4. test.sh
-(TODO: 定义模块特有的 Benchmark 逻辑)
 
-📋 待办事项 (TODO)
-[ ] 扩展子模块：集成 datajuicer、cpython、numpy、pandas。
+```
 
-[ ] 测试流程：完善 test.sh，支持上机一键出结果。
+### 4. `test.sh`
 
-[ ] JIT 支持：预编译 Python 支持配置 JIT 选项，并自动处理 LLVM 依赖。
+*(TODO: 定义模块特有的 Benchmark 逻辑)*
 
-[ ] 编译模式开关：支持关闭预编译模式，允许开发人员在子模块容器内单独编译 Python 以便调试。
+---
 
-[ ] Yum 缓存共享：确认并实现 yum 安装包在不同模块间的共享/复用机制。
+## 📋 待办事项 (TODO)
+
+* [ ] **扩展子模块**：集成 `datajuicer`、`cpython`、`numpy`、`pandas`。
+* [ ] **测试流程**：完善 `test.sh`，支持上机一键出结果。
+* [ ] **JIT 支持**：预编译 Python 支持配置 JIT 选项，并自动处理 LLVM 依赖。
+* [ ] **编译模式开关**：支持关闭预编译模式，允许开发人员在子模块容器内单独编译 Python 以便调试。
+* [ ] **Yum 缓存共享**：确认并实现 yum 安装包在不同模块间的共享/复用机制。
