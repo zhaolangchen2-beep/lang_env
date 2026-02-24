@@ -108,7 +108,7 @@ if [[ "$(docker images -q $BASE_OS 2> /dev/null)" == "" ]]; then
     IMG_INFO=$(python3 -c "
 import yaml
 with open('$URL_FILE') as f:
-    data = yaml.safe_load(f)['url']['base_images_$ARCH_KEY']
+    data = yaml.safe_load(f)['urls']['base_images_$ARCH_KEY']
     filename = list(data.keys())[0]
     url = data[filename]
     print(f'{filename}|{url}')
