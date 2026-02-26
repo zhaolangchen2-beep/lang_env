@@ -183,7 +183,7 @@ for DEP in $DEPENDENCIES; do
         fi
         
         echo " -> Downloading $DEP from $DOWNLOAD_URL..."
-        wget -P "$TMP_DIR" "$DOWNLOAD_URL"
+        wget --no-check-certificate -P "$TMP_DIR" "$DOWNLOAD_URL"
     fi
 done
 
@@ -217,7 +217,7 @@ else
     
     if [ ! -f "$TMP_DIR/$PY_FILENAME" ]; then
         echo " -> Downloading Python Source from $PY_SOURCE_URL..."
-        wget -P "$TMP_DIR" "$PY_SOURCE_URL"
+        wget --no-check-certificate -P "$TMP_DIR" "$PY_SOURCE_URL"
     fi
 
     # 3.2 启动临时容器进行编译
