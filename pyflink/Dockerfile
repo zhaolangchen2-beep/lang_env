@@ -82,7 +82,7 @@ ENV CC=gcc
 ENV CXX=g++
 ENV PYARROW_WITH_PARQUET=1
 ENV PIP_NO_VERIFY_SSL=true
-RUN python3 -m pip install --no-cache-dir cython setuptools wheel "numpy<2" 
+RUN python3 -m pip install --no-cache-dir cython "setuptools==75.8.0" wheel "numpy<2" 
 
 WORKDIR /opt/apache-arrow-16.1.0/cpp
 RUN mkdir build && cd build && \
