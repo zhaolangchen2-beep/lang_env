@@ -40,8 +40,8 @@ fi
 # Python配置
 # export PYSPARK_PYTHON=/opt/spark/apps/profiler_wrapper.sh
 # export PYSPARK_PYTHON=python3
-export PYSPARK_PYTHON=/usr/local/python/bin/python3
-export PYSPARK_DRIVER_PYTHON=/usr/local/python/bin/python3
+export PYSPARK_PYTHON=/opt/python/bin/python3
+export PYSPARK_DRIVER_PYTHON=/opt/python/bin/python3
 # --- Python 3.14 JIT 相关开关 ---
 # 开启 JIT (对应你编译时的 yes-off)
 export PYTHON_JIT=1

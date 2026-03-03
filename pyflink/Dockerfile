@@ -43,16 +43,10 @@ RUN yum clean all && yum makecache && \
     g++ \
     sudo 
 
-# ================== 3. 注入 Python (核心逻辑) ==================
-# 从构建上下文 (主目录/tmp) 复制预编译 Python
-# 注意：这里假设 deploy.sh 是在主目录执行 build，且上下文包含 tmp
-COPY ./tmp/python_versions/${PYTHON_VERSION} /usr/local/python
-RUN ln -s /usr/local/python/bin/python3 /usr/local/bin/python && \
-    ln -s /usr/local/python/bin/pip3 /usr/local/bin/pip
-# 配置 Python 环境变量
-ENV PATH="/usr/local/python/bin:$PATH"
+
+ENV PATH="/opt/python/bin:$PATH"
 # 注意：如果 yum 报错，请注释掉下面这行 LD_LIBRARY_PATH
-ENV LD_LIBRARY_PATH="/usr/local/python/lib:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="/opt/python/lib:$LD_LIBRARY_PATH"
 # 验证 Python 是否可用
 RUN python3 --version
 
@@ -91,7 +85,8 @@ RUN mkdir build && cd build && \
         -DARROW_PARQUET=ON \
         -DARROW_WITH_SNAPPY=ON \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DCMAKE_BUILD_TYPE=Release && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DTHIRDPARTY_ALLOW_DOWNLOAD=ON && \
     make -j$(nproc) && \
     make install
 

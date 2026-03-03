@@ -41,17 +41,6 @@ RUN yum clean all && yum makecache && \
     yum clean all && \
     rm -rf /var/cache/yum
 
-# ================== 3. 注入 Python (核心逻辑) ==================
-# 从构建上下文 (主目录/tmp) 复制预编译 Python
-# 注意：这里假设 deploy.sh 是在主目录执行 build，且上下文包含 tmp
-COPY ./tmp/python_versions/${PYTHON_VERSION} /usr/local/python
-RUN ln -s /usr/local/python/bin/python3 /usr/local/bin/python && \
-    ln -s /usr/local/python/bin/pip3 /usr/local/bin/pip
-
-# 配置 Python 环境变量
-ENV PATH="/usr/local/python/bin:$PATH"
-# 注意：如果 yum 报错，请注释掉下面这行 LD_LIBRARY_PATH
-ENV LD_LIBRARY_PATH="/usr/local/python/lib:$LD_LIBRARY_PATH"
 
 # 验证 Python 是否可用
 RUN python3 --version

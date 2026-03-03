@@ -1,20 +1,175 @@
 #!/bin/bash
+# ================================================================
+# deploy.sh — 一键部署脚本
+#
+# 功能流程：
+#   Step 1   : 检查宿主机环境（代理、Docker、基础镜像）
+#   Step 2   : 根据模块 dependency.yaml 下载依赖软件包
+#   Step 2.5 : 在容器内编译通用 Python 发行版
+#   Step 3   : 构建模块 Docker 镜像
+#   Step 4   : 拉起容器
+#
+# 用法：
+#   ./deploy.sh <module_name> <python_version>
+#
+# 示例：
+#   ./deploy.sh spark 3.11.9
+#
+# 依赖文件：
+#   conf.yaml                  — 全局配置（代理、Docker 版本、Python 编译参数等）
+#   url.yaml                   — 所有离线资源的下载地址
+#   <module>/dependency.yaml   — 模块级依赖声明
+#   <module>/Dockerfile        — 模块镜像构建文件
+#   <module>/start.sh          — 模块容器启动脚本
+# ================================================================
+
 set -e  # 遇到错误立即退出
 
-# ================= 辅助函数：YAML解析 =================
-# 使用系统自带Python解析YAML，避免依赖 jq/yq
-function get_yaml_val() {
-    python3 -c "import yaml; data = yaml.safe_load(open('$1')); print(data$2)" 2>/dev/null
-}
-
-# ================= 第一步：环境检查 =================
+# ────────────────────────────────────────────────────────────────
+# 全局路径常量
+# ────────────────────────────────────────────────────────────────
 CONF_FILE="conf.yaml"
 URL_FILE="url.yaml"
 TMP_DIR="$(pwd)/tmp"
+# ────────────────────────────────────────────────────────────────
+# 辅助函数
+# ────────────────────────────────────────────────────────────────
 
+# get_yaml_val <yaml_file> <python_subscript>
+#   用宿主机 Python3 + PyYAML 解析 YAML，返回指定路径的值。
+#   示例: get_yaml_val conf.yaml "['global']['proxy']"
+get_yaml_val() {
+    python3 -c \
+        "import yaml; data = yaml.safe_load(open('$1')); print(data$2)" \
+        2>/dev/null
+}
+
+# ================================================================
+#  参数解析
+# ================================================================
+MODULE_NAME=""
+PYTHON_VERSION=""
+COMPACT_MODE=false   # 默认关闭：使用镜像分层模式
+                     # 开启后：仅复制编译产物，不保留中间镜像（节省空间）
+
+# 解析命令行参数
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --compact)
+            COMPACT_MODE=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: ./deploy.sh [OPTIONS] <module_name> <python_version>"
+            echo ""
+            echo "Options:"
+            echo "  --compact    Space-saving mode: only copy Python binaries"
+            echo "               into module image (no intermediate cpython image)."
+            echo "               Default: build a cpython_base:<version> image first,"
+            echo "               then use it as BASE_IMAGE for module build."
+            echo ""
+            echo "Examples:"
+            echo "  ./deploy.sh pyspark 3.14.2              # image layering mode (default)"
+            echo "  ./deploy.sh --compact pyspark 3.14.2    # compact binary-copy mode"
+            exit 0
+            ;;
+        -*)
+            echo "❌ Unknown option: $1"
+            echo "   Run './deploy.sh --help' for usage."
+            exit 1
+            ;;
+        *)
+            # 位置参数：依次为 module_name, python_version
+            if [ -z "$MODULE_NAME" ]; then
+                MODULE_NAME="$1"
+            elif [ -z "$PYTHON_VERSION" ]; then
+                PYTHON_VERSION="$1"
+            else
+                echo "❌ Too many arguments. Run './deploy.sh --help' for usage."
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# 校验必需参数
+if [ -z "$MODULE_NAME" ] || [ -z "$PYTHON_VERSION" ]; then
+    echo "❌ Missing required arguments."
+    echo "   Usage: ./deploy.sh [--compact] <module_name> <python_version>"
+    exit 1
+fi
+
+MODULE_DIR="./${MODULE_NAME}"
+DEP_FILE="${MODULE_DIR}/dependency.yaml"
+
+if [ ! -f "$DEP_FILE" ]; then
+    echo "❌ Error: $DEP_FILE not found. Is '$MODULE_NAME' a valid module?"
+    exit 1
+fi
+
+echo " -> Module        : $MODULE_NAME"
+echo " -> Python version: $PYTHON_VERSION"
+if [ "$COMPACT_MODE" = true ]; then
+    echo " -> Build mode    : compact (binary-copy only, saves space)"
+else
+    echo " -> Build mode    : layered (cpython_base image, keeps Python in path)"
+fi
+
+# ================================================================
+#  Step 1 : 宿主机环境检查
+# ================================================================
 echo "Step 1: Checking Host Environment..."
 
-# 1. 检查 Proxy
+# ── 1.1 主机python3检查 ────────────────────────────────────────────────
+if ! command -v python3 &>/dev/null; then
+    echo ""
+    echo "❌ Error: python3 not found on this system."
+    echo ""
+    echo "   This script requires Python 3 with the PyYAML package"
+    echo "   to parse configuration files (conf.yaml, url.yaml)."
+    echo ""
+    echo "   Please install Python 3 first:"
+    echo ""
+    echo "     # CentOS / openEuler / RHEL:"
+    echo "     yum install -y python3"
+    echo ""
+    echo "     # Ubuntu / Debian:"
+    echo "     apt-get install -y python3"
+    echo ""
+    exit 1
+fi
+
+# ── 1.2 pyyaml检查 ────────────────────────────────────────────────
+if ! python3 -c "import yaml" &>/dev/null; then
+    echo ""
+    echo "❌ Error: Python module 'PyYAML' is not installed."
+    echo ""
+    echo "   This script requires PyYAML to parse YAML configuration files."
+    echo ""
+    echo "   Please install it using one of the following methods:"
+    echo ""
+    echo "     # Via pip (recommended):"
+    echo "     python3 -m pip install pyyaml"
+    echo ""
+    echo "     # Via pip (if pip not in PATH):"
+    echo "     python3 -m ensurepip --default-pip && python3 -m pip install pyyaml"
+    echo ""
+    echo "     # Via system package manager:"
+    echo "     # CentOS / openEuler / RHEL:"
+    echo "     yum install -y python3-pyyaml"
+    echo ""
+    echo "     # Ubuntu / Debian:"
+    echo "     apt-get install -y python3-yaml"
+    echo ""
+    exit 1
+fi
+
+echo " -> Python3 : $(python3 --version)"
+echo " -> PyYAML  : $(python3 -c "import yaml; print(yaml.__version__)" 2>/dev/null || echo 'version unknown')"
+echo " -> Prerequisites OK."
+
+# ── 1.3 代理配置 ────────────────────────────────────────────────
 PROXY=$(get_yaml_val $CONF_FILE "['global']['proxy']")
 if [ "$PROXY" != "None" ] && [ -n "$PROXY" ]; then
     export http_proxy=$PROXY
@@ -22,7 +177,7 @@ if [ "$PROXY" != "None" ] && [ -n "$PROXY" ]; then
     echo " -> Proxy set to $PROXY"
 fi
 
-# 2. 获取docker版本
+# ── 1.4 Docker 版本检查 / 安装 ─────────────────────────────────
 if ! command -v docker &> /dev/null; then
     DOCKER_VER="0.0.0"
     echo " -> Docker not found. Installing..."
@@ -38,7 +193,36 @@ IS_LOWER=$(printf '%s\n%s' "$EXPECTED_VER" "$DOCKER_VER" | sort -V | head -n1)
 
 if [ "$IS_LOWER" != "$EXPECTED_VER" ] || [ "$DOCKER_VER" == "0.0.0" ]; then
     echo "⚠️ Docker version is too low or not installed. Upgrading to $EXPECTED_VER..."
-    
+    # ---- 卸载旧版本 Docker（如果存在） ----
+    # 涵盖各种历史包名：docker / docker-engine / docker.io / docker-ce 等
+    if [ "$DOCKER_VER" != "0.0.0" ]; then
+        echo " -> Removing old Docker ($DOCKER_VER)..."
+
+        # 先停止服务，忽略不存在的情况
+        systemctl stop docker.socket 2>/dev/null || true
+        systemctl stop docker        2>/dev/null || true
+        systemctl stop containerd    2>/dev/null || true
+
+        # 卸载所有可能的 Docker 相关包
+        yum remove -y \
+            docker \
+            docker-client \
+            docker-client-latest \
+            docker-common \
+            docker-latest \
+            docker-latest-logrotate \
+            docker-logrotate \
+            docker-engine \
+            docker-ce \
+            docker-ce-cli \
+            docker-ce-rootless-extras \
+            docker-buildx-plugin \
+            docker-compose-plugin \
+            containerd.io \
+            2>/dev/null || true
+
+        echo " -> Old Docker packages removed."
+    fi
     # 写入 Repo 配置 (注意：这里使用 EOF 包装，并转义了 $basearch)
     cat > /etc/yum.repos.d/docker-ce.repo << EOF
 [docker-ce-stable]
@@ -82,85 +266,9 @@ else
     echo " -> Docker version check passed."
 fi
 
-
-# 3. 检查基础镜像
-echo "Step 3: Checking Base OS Image..."
-
-BASE_OS=$(get_yaml_val $CONF_FILE "['global']['base_os_image']")
-
-if [[ "$(docker images -q $BASE_OS 2> /dev/null)" == "" ]]; then
-    echo " -> Base image $BASE_OS not found. Preparing offline download..."
-    
-    # 1. 识别主机架构
-    ARCH=$(uname -m)
-    echo " -> Detected Architecture: $ARCH"
-    
-    # 映射架构名称到 yaml 的 key
-    case $ARCH in
-        x86_64)  ARCH_KEY="x86" ;;
-        aarch64) ARCH_KEY="aarch64" ;;
-        *) echo "❌ Unsupported architecture: $ARCH"; exit 1 ;;
-    esac
-
-    # 2. 从 url.yaml 获取文件名和下载链接
-    # 注意：这里假设 yaml 结构中 base_images_$ARCH_KEY 下只有一个子项
-    # 我们通过 python 提取第一个 key (文件名) 和第一个 value (URL)
-    IMG_INFO=$(python3 -c "
-import yaml
-with open('$URL_FILE') as f:
-    data = yaml.safe_load(f)['urls']['base_images_$ARCH_KEY']
-    filename = list(data.keys())[0]
-    url = data[filename]
-    print(f'{filename}|{url}')
-")
-    
-    IMG_FILENAME=$(echo $IMG_INFO | cut -d'|' -f1)
-    IMG_URL=$(echo $IMG_INFO | cut -d'|' -f2)
-    
-    IMG_PATH="$TMP_DIR/$IMG_FILENAME"
-
-    # 3. 下载离线包
-    if [ ! -f "$IMG_PATH" ]; then
-        echo " -> Downloading $IMG_FILENAME from $IMG_URL..."
-        wget --no-check-certificate -P "$TMP_DIR" "$IMG_URL"
-    else
-        echo " -> Offline image package already exists in tmp."
-    fi
-
-    # 4. 执行 docker load
-    echo " -> Loading image into Docker..."
-    LOAD_RESULT=$(docker load -i "$IMG_PATH")
-    echo "$LOAD_RESULT"
-
-    # 5. 自动打 Tag (可选)
-    # 如果加载出来的镜像名字和 conf.yaml 里的 BASE_OS 不一致，需要打个 tag 关联起来
-    # 通常 openEuler 离线包 load 出来后镜像名可能不带版本号，这里我们强制关联
-    LOADED_ID=$(echo "$LOAD_RESULT" | grep -oE '[0-9a-f]{12}' | head -n1)
-    if [ -n "$LOADED_ID" ]; then
-        echo " -> Tagging image $LOADED_ID as $BASE_OS"
-        docker tag "$LOADED_ID" "$BASE_OS"
-    fi
-else
-    echo " -> Base image $BASE_OS exists."
-fi
-
-# ================= 第二步：依赖下载 =================
-MODULE_NAME=$1
-PYTHON_VERSION=$2
-
-if [ -z "$MODULE_NAME" ] || [ -z "$PYTHON_VERSION" ]; then
-    echo "Usage: ./deploy.sh <module_name> <python_version>"
-    exit 1
-fi
-
-MODULE_DIR="./$MODULE_NAME"
-DEP_FILE="$MODULE_DIR/dependency.yaml"
-
-if [ ! -f "$DEP_FILE" ]; then
-    echo "Error: Module $MODULE_NAME not found or dependency.yaml missing."
-    exit 1
-fi
-
+# ================================================================
+#  Step 2 : 模块依赖软件包下载
+# ================================================================
 echo "Step 2: Resolving Dependencies for $MODULE_NAME..."
 
 # 读取该模块需要的软件列表 (假设 dependency.yaml 格式为 list)
@@ -186,138 +294,305 @@ for DEP in $DEPENDENCIES; do
         wget --no-check-certificate -P "$TMP_DIR" "$DOWNLOAD_URL"
     fi
 done
+# ── 1.3 基础操作系统镜像 ───────────────────────────────────────
+echo " -> Checking Base OS Image..."
 
+BASE_OS=$(get_yaml_val "$CONF_FILE" "['global']['base_os_image']")
 
-# ================= 特殊步骤：准备通用 Python 环境 =================
+if [[ "$(docker images -q "$BASE_OS" 2>/dev/null)" == "" ]]; then
+    echo " -> Base image $BASE_OS not found locally. Preparing offline load..."
+
+    # 识别宿主机 CPU 架构，映射到 url.yaml 中的 key
+    ARCH=$(uname -m)
+    echo " -> Detected architecture: $ARCH"
+
+    case "$ARCH" in
+        x86_64)  ARCH_KEY="x86"     ;;
+        aarch64) ARCH_KEY="aarch64" ;;
+        *)
+            echo "❌ Unsupported architecture: $ARCH"
+            exit 1
+            ;;
+    esac
+
+    # 从 url.yaml 解析出文件名和下载地址
+    #   结构示例:
+    #     urls:
+    #       base_images_x86:
+    #         openeuler-22.03-x86.tar.gz: https://...
+    IMG_INFO=$(python3 -c "
+import yaml
+with open('$URL_FILE') as f:
+    data = yaml.safe_load(f)['urls']['base_images_${ARCH_KEY}']
+    filename = list(data.keys())[0]
+    url = data[filename]
+    print(f'{filename}|{url}')
+")
+
+    IMG_FILENAME=$(echo "$IMG_INFO" | cut -d'|' -f1)
+    IMG_URL=$(echo "$IMG_INFO" | cut -d'|' -f2)
+    IMG_PATH="$TMP_DIR/$IMG_FILENAME"
+
+    # 下载镜像离线包（如已存在则跳过）
+    if [ ! -f "$IMG_PATH" ]; then
+        echo " -> Downloading $IMG_FILENAME ..."
+        wget --no-check-certificate -P "$TMP_DIR" "$IMG_URL"
+    else
+        echo " -> Offline image package already cached."
+    fi
+
+    # 加载镜像到 Docker
+    echo " -> docker load -i $IMG_PATH"
+    LOAD_RESULT=$(docker load -i "$IMG_PATH")
+    echo "$LOAD_RESULT"
+
+    # 给加载出的镜像打上 conf.yaml 中定义的标签，确保后续引用一致
+    LOADED_ID=$(echo "$LOAD_RESULT" | grep -oE '[0-9a-f]{12}' | head -n1)
+    if [ -n "$LOADED_ID" ]; then
+        echo " -> Tagging $LOADED_ID → $BASE_OS"
+        docker tag "$LOADED_ID" "$BASE_OS"
+    fi
+else
+    echo " -> Base image $BASE_OS already exists."
+fi
+# ================================================================
+#  Step 2.5 : Python 环境准备
+#
+#  两种模式：
+#
+#  【默认模式 — 镜像分层】
+#    在基础 OS 镜像上编译 Python，生成中间镜像 cpython_base:<version>。
+#    后续模块 Dockerfile 以 cpython_base:<version> 为 BASE_IMAGE 构建。
+#    优点：模块镜像内保留完整 Python 安装路径，python3 直接可用。
+#
+#  【--compact 模式 — 二进制复制】
+#    在临时容器内编译 Python，产物输出到宿主机 tmp/ 目录。
+#    后续模块 Dockerfile 用 COPY 将二进制复制进去。
+#    优点：不产生中间镜像，最终镜像体积更小。
+# ================================================================
 echo "Step 2.5: Preparing Generic Python Environment (Containerized Build)..."
 
-# 1. 获取配置
-SUPPORTED_VERSIONS=$(python3 -c "import yaml; print(' '.join(yaml.safe_load(open('$CONF_FILE'))['python_build']['supported_versions']))")
-CFLAGS_VAL=$(get_yaml_val $CONF_FILE "['python_build']['cflags']")
-CONFIG_ARGS=$(get_yaml_val $CONF_FILE "['python_build']['configure_args']")
-BASE_OS=$(get_yaml_val $CONF_FILE "['global']['base_os_image']") # 确保使用和运行环境一致的基础镜像
+# ── 2.5.1 校验 Python 版本是否在支持列表中 ────────────────────
+SUPPORTED_VERSIONS=$(python3 -c "
+import yaml
+print(' '.join(yaml.safe_load(open('$CONF_FILE'))['python_build']['supported_versions']))
+")
 
-# 2. 校验版本
 if [[ ! " $SUPPORTED_VERSIONS " =~ " $PYTHON_VERSION " ]]; then
-    echo "Error: Python version $PYTHON_VERSION is not in supported_versions list: $SUPPORTED_VERSIONS"
+    echo "❌ Error: Python $PYTHON_VERSION not in supported list: $SUPPORTED_VERSIONS"
     exit 1
 fi
 
-# 3. 检查是否需要编译
-PYTHON_DIST_HOST_DIR="$TMP_DIR/python_versions/$PYTHON_VERSION"
-if [ -d "$PYTHON_DIST_HOST_DIR/bin" ]; then
-    echo " -> Python $PYTHON_VERSION generic build found in $PYTHON_DIST_HOST_DIR. Skipping build."
+# ── 2.5.2 读取编译参数 ────────────────────────────────────────
+CFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['cflags']")
+LDFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['ldflags']")
+CONFIG_ARGS=$(get_yaml_val "$CONF_FILE" "['python_build']['configure_args']")
+PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_prefix']" 2>/dev/null || echo "/opt/python")
+
+# ── 2.5.3 确保 Python 源码包已下载 ───────────────────────────
+PY_SOURCE_URL=$(get_yaml_val "$URL_FILE" "['urls']['python_sources']['$PYTHON_VERSION']")
+PY_FILENAME=$(basename "$PY_SOURCE_URL")
+
+if [ ! -f "$TMP_DIR/$PY_FILENAME" ]; then
+    echo " -> Downloading Python source: $PY_FILENAME"
+    wget --no-check-certificate -P "$TMP_DIR" "$PY_SOURCE_URL"
 else
-    echo " -> Python $PYTHON_VERSION build missing."
-    
-    # 3.1 确保源码包已下载 (复用之前的下载逻辑，确保 tmp 下有 Python-x.x.x.tgz)
-    # 这里的 Key 需要和 url.yaml 里的对应，假设是 python_sources 下的 Key
-    PY_SOURCE_URL=$(get_yaml_val $URL_FILE "['urls']['python_sources']['$PYTHON_VERSION']")
-    PY_FILENAME=$(basename "$PY_SOURCE_URL")
-    
-    if [ ! -f "$TMP_DIR/$PY_FILENAME" ]; then
-        echo " -> Downloading Python Source from $PY_SOURCE_URL..."
-        wget --no-check-certificate -P "$TMP_DIR" "$PY_SOURCE_URL"
-    fi
-
-    # 3.2 启动临时容器进行编译
-    echo " -> Starting temporary build container ($BASE_OS)..."
-    echo "    (This may take a while. CFLAGS: $CFLAGS_VAL)"
-
-    # 创建输出目录
-    mkdir -p "$PYTHON_DIST_HOST_DIR"
-
-    # 获取当前用户ID，用于修正文件权限
-    CURRENT_UID=$(id -u)
-    CURRENT_GID=$(id -g)
-
-    # 核心：Docker 编译命令
-    # 1. 挂载 tmp 目录到容器 /build_ctx
-    # 2. 传递 代理 和 编译参数
-    # 3. 安装编译依赖 (针对 Debian/Ubuntu，如果是 Alpine 需要改为 apk add)
-    docker run --rm \
-        -v "$TMP_DIR:/build_ctx" \
-        -e http_proxy="$PROXY" \
-        -e https_proxy="$PROXY" \
-        -e CFLAGS="$CFLAGS_VAL" \
-        -e LDFLAGS="$(get_yaml_val $CONF_FILE "['python_build']['ldflags']")" \
-        "$BASE_OS" \
-        /bin/bash -c "
-            set -e
-            echo '=== [Container] Installing Build Dependencies ==='
-            # 安装构建 Python 必须的最小依赖集
-			echo "sslverify=false" >> /etc/yum.conf
-			yum clean all && yum makecache
-
-			yum install -y \
-				gcc \
-				gcc-c++ \
-				make \
-				findutils \
-				diffutils \
-				file \
-				tar \
-				gzip \
-				zlib-devel \
-				bzip2-devel \
-				openssl-devel \
-				ncurses-devel \
-				sqlite-devel \
-				readline-devel \
-				tk-devel \
-				gdbm-devel \
-				libpcap-devel \
-				xz-devel \
-				libffi-devel \
-				libuuid-devel \
-				libzstd-devel \
-				sudo
-            echo '=== [Container] Extracting Source ==='
-            cd /build_ctx
-            tar xzf $PY_FILENAME
-            cd Python-$PYTHON_VERSION
-
-            echo '=== [Container] Configuring ==='
-            ./configure --prefix=/build_ctx/python_versions/$PYTHON_VERSION $CONFIG_ARGS > /dev/null
-
-            echo '=== [Container] Compiling (Jobs: $(nproc)) ==='
-            make -j$(nproc) > /dev/null
-
-            echo '=== [Container] Installing ==='
-            make install > /dev/null
-            
-            echo '=== [Container] Cleaning up permissions ==='
-            # 修正归属权，否则宿主机无法操作
-            chown -R $CURRENT_UID:$CURRENT_GID /build_ctx/python_versions/$PYTHON_VERSION
-            
-            # 清理源码解压目录 (可选)
-            # cd .. && rm -rf Python-$PYTHON_VERSION
-        "
-
-    if [ $? -eq 0 ]; then
-        echo " -> Compilation Success! Artifacts stored in $PYTHON_DIST_HOST_DIR"
-    else
-        echo "Error: Compilation failed inside Docker container."
-        exit 1
-    fi
+    echo " -> Python source already cached: $PY_FILENAME"
 fi
 
-# ================= 第三步：构建镜像 =================
+# ── 2.5.4 按模式分别处理 ─────────────────────────────────────
+
+if [ "$COMPACT_MODE" = true ]; then
+    CPYTHON_IMAGE="cpython_compact:${PYTHON_VERSION}"
+else
+    CPYTHON_IMAGE="cpython_full:${PYTHON_VERSION}"
+fi
+
+if [[ "$(docker images -q "$CPYTHON_IMAGE" 2>/dev/null)" != "" ]]; then
+    echo " -> Image $CPYTHON_IMAGE already exists. Skipping build."
+else
+    echo " -> Building $CPYTHON_IMAGE ..."
+
+    echo "    Mode             = $([ "$COMPACT_MODE" = true ] && echo 'compact (multi-stage, small)' || echo 'default (single-stage, with build tools)')"
+    echo "    BASE_OS          = $BASE_OS"
+    echo "    INSTALL_PREFIX   = $PYTHON_INSTALL_PREFIX"
+    echo "    CFLAGS           = $CFLAGS_VAL"
+    echo "    LDFLAGS          = $LDFLAGS_VAL"
+    echo "    configure args   = $CONFIG_ARGS"
+
+    CPYTHON_DOCKERFILE="$TMP_DIR/Dockerfile.cpython_base"
+
+    if [ "$COMPACT_MODE" = true ]; then
+        # ── compact: 多阶段构建，最终镜像不含编译工具 ──
+        cat > "$CPYTHON_DOCKERFILE" << 'DOCKERFILE_EOF'
+ARG BASE_IMAGE
+
+# ======== Stage 1: 编译 ========
+FROM ${BASE_IMAGE} AS builder
+
+ARG PYTHON_VERSION
+ARG PYTHON_INSTALL_PREFIX
+ARG CFLAGS_VAL
+ARG LDFLAGS_VAL
+ARG CONFIG_ARGS
+ARG PROXY
+ARG PY_FILENAME
+
+ENV http_proxy=${PROXY} \
+    https_proxy=${PROXY} \
+    CFLAGS=${CFLAGS_VAL} \
+    LDFLAGS=${LDFLAGS_VAL}
+
+RUN echo "sslverify=false" >> /etc/yum.conf && \
+    yum clean all && yum makecache && \
+    yum install -y \
+        gcc gcc-c++ make \
+        findutils diffutils file \
+        tar gzip \
+        zlib-devel bzip2-devel openssl-devel \
+        ncurses-devel sqlite-devel readline-devel \
+        tk-devel gdbm-devel libpcap-devel \
+        xz-devel libffi-devel libuuid-devel \
+        libzstd-devel && \
+    yum clean all
+
+COPY tmp/${PY_FILENAME} /tmp/src/${PY_FILENAME}
+RUN cd /tmp/src && \
+    tar xf ${PY_FILENAME} && \
+    cd Python-${PYTHON_VERSION} && \
+    ./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
+    make -j$(nproc) > /dev/null && \
+    make install > /dev/null && \
+    rm -rf /tmp/src
+
+# ======== Stage 2: 仅保留运行时 ========
+FROM ${BASE_IMAGE}
+
+ARG PYTHON_VERSION
+ARG PYTHON_INSTALL_PREFIX
+ENV http_proxy=${PROXY} \
+    https_proxy=${PROXY} \
+RUN echo "sslverify=false" >> /etc/yum.conf && \
+    yum clean all && yum makecache && \
+    yum install -y \
+        zlib bzip2-libs openssl-libs \
+        ncurses-libs sqlite-libs readline \
+        libffi xz-libs libuuid libzstd && \
+    yum clean all
+
+COPY --from=builder ${PYTHON_INSTALL_PREFIX} ${PYTHON_INSTALL_PREFIX}
+
+ENV PATH="${PYTHON_INSTALL_PREFIX}/bin:${PATH}" \
+    LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
+
+RUN python3 --version && pip3 --version
+
+LABEL description="CPython ${PYTHON_VERSION} compact (runtime only)" \
+      python.version="${PYTHON_VERSION}" \
+      python.prefix="${PYTHON_INSTALL_PREFIX}"
+DOCKERFILE_EOF
+
+    else
+        # ── default: 单阶段构建，保留编译工具链 ──
+        cat > "$CPYTHON_DOCKERFILE" << 'DOCKERFILE_EOF'
+ARG BASE_IMAGE
+
+FROM ${BASE_IMAGE}
+
+ARG PYTHON_VERSION
+ARG PYTHON_INSTALL_PREFIX
+ARG CFLAGS_VAL
+ARG LDFLAGS_VAL
+ARG CONFIG_ARGS
+ARG PROXY
+ARG PY_FILENAME
+
+ENV http_proxy=${PROXY} \
+    https_proxy=${PROXY} \
+    CFLAGS=${CFLAGS_VAL} \
+    LDFLAGS=${LDFLAGS_VAL}
+
+RUN echo "sslverify=false" >> /etc/yum.conf && \
+    yum clean all && yum makecache && \
+    yum install -y \
+        gcc gcc-c++ make \
+        findutils diffutils file \
+        tar gzip \
+        zlib-devel bzip2-devel openssl-devel \
+        ncurses-devel sqlite-devel readline-devel \
+        tk-devel gdbm-devel libpcap-devel \
+        xz-devel libffi-devel libuuid-devel \
+        libzstd-devel && \
+    yum clean all
+
+COPY tmp/${PY_FILENAME} /tmp/src/${PY_FILENAME}
+RUN cd /tmp/src && \
+    tar xf ${PY_FILENAME} && \
+    cd Python-${PYTHON_VERSION} && \
+    ./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
+    make -j$(nproc) > /dev/null && \
+    make install > /dev/null && \
+    rm -rf /tmp/src
+
+ENV PATH="${PYTHON_INSTALL_PREFIX}/bin:${PATH}" \
+    LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
+
+RUN python3 --version && pip3 --version
+
+LABEL description="CPython ${PYTHON_VERSION} full (with build tools)" \
+      python.version="${PYTHON_VERSION}" \
+      python.prefix="${PYTHON_INSTALL_PREFIX}"
+DOCKERFILE_EOF
+	fi
+
+	# 执行构建（以项目根目录为 context，确保 tmp/ 可访问）
+	docker build \
+		-f "$CPYTHON_DOCKERFILE" \
+		--build-arg BASE_IMAGE="$BASE_OS" \
+		--build-arg PYTHON_VERSION="$PYTHON_VERSION" \
+		--build-arg PYTHON_INSTALL_PREFIX="$PYTHON_INSTALL_PREFIX" \
+		--build-arg CFLAGS_VAL="$CFLAGS_VAL" \
+		--build-arg LDFLAGS_VAL="$LDFLAGS_VAL" \
+		--build-arg CONFIG_ARGS="$CONFIG_ARGS" \
+		--build-arg PROXY="$PROXY" \
+		--build-arg PY_FILENAME="$PY_FILENAME" \
+		-t "$CPYTHON_IMAGE" \
+		.
+	echo "✅ [layered] Image $CPYTHON_IMAGE built successfully."
+fi
+MODULE_BASE_IMAGE="$CPYTHON_IMAGE"
+
+# ================================================================
+#  Step 3 : 构建模块 Docker 镜像
+# ================================================================
 FULL_IMAGE_NAME="${MODULE_NAME}:${PYTHON_VERSION}"
-echo "Step 3: Building Image $FULL_IMAGE_NAME..."
+echo ""
+echo "Step 3: Building Docker image '$FULL_IMAGE_NAME'..."
+echo " -> BASE_IMAGE = $MODULE_BASE_IMAGE"
 
-# 1. 准备该模块需要的 Python 产物路径
-PYTHON_SRC_DIR="$TMP_DIR/python_versions/$PYTHON_VERSION"
+if [ "$COMPACT_MODE" = true ]; then
+    echo " -> [compact] Module Dockerfile should COPY from tmp/python_versions/${PYTHON_VERSION}/"
+else
+    echo " -> [layered] Module Dockerfile inherits FROM $MODULE_BASE_IMAGE (python3 already in PATH)"
+fi
 
-# 2. 发起构建
-# 我们在主目录发起构建，这样 Dockerfile 就能通过相对路径访问到 tmp/python_versions
+# 以项目根目录为 build context
+# Dockerfile 可使用的 ARG：
+#   BASE_IMAGE       — 默认模式: cpython_base:<ver>  /  compact模式: 原始OS镜像
+#   PYTHON_VERSION   — Python 版本号
+#   PROXY            — 代理地址
+#   COMPACT_MODE     — "true" 或 "false"，Dockerfile 内可据此决定是否 COPY 二进制
 docker build \
     -f "$MODULE_DIR/Dockerfile" \
-    --build-arg PROXY="$PROXY" \
+    --build-arg BASE_IMAGE="$MODULE_BASE_IMAGE" \
     --build-arg PYTHON_VERSION="$PYTHON_VERSION" \
-    --build-arg BASE_IMAGE="$BASE_OS" \
-    -t "${MODULE_NAME}:${PYTHON_VERSION}" \
-    .  # 注意这里的点，代表以主目录为上下文
+    --build-arg PROXY="$PROXY" \
+    --build-arg COMPACT_MODE="$COMPACT_MODE" \
+    -t "$FULL_IMAGE_NAME" \
+    .
+
+echo "✅ Image '$FULL_IMAGE_NAME' built successfully."
+
 
 # ================= 第四步：拉起容器 =================
 echo "Step 4: Executing $MODULE_DIR/start.sh..."
