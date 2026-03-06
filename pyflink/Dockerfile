@@ -100,7 +100,7 @@ RUN sed -i '/def __getsegcount__/,/return 1/d' pyarrow/io.pxi && \
 RUN export ARROW_HOME=/usr/local && \
     export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH && \
     export PYARROW_WITH_PARQUET=1 && \
-    python setup.py install
+    python3 setup.py install
 
 #-------grpcio
 ENV GRPC_PYTHON_BUILD_WITH_CYTHON=1
@@ -120,7 +120,7 @@ ENV ARROW_HOME=/usr/local
 
 # 3. 切换目录验证（这次稳了）
 WORKDIR /
-RUN python -c "import pyarrow; print(f'PyArrow version {pyarrow.__version__} is ready!')"
+RUN python3 -c "import pyarrow; print(f'PyArrow version {pyarrow.__version__} is ready!')"
 
 RUN python3 -m pip uninstall -y cython
 RUN python3 -m pip install "apache-beam==2.61.0" "apache-flink==2.2.0" --no-deps --no-build-isolation && \
