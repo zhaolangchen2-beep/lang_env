@@ -30,6 +30,15 @@ def parse_args():
                    help="(NexMark) rows / persons ratio")
     p.add_argument("--list", "-l", action="store_true",
                    help="List available benchmarks and exit")
+    # ── 资源配置参数 ──
+    p.add_argument("--executor-memory", default="16g",
+                   help="Executor memory (default: 16g)")
+    p.add_argument("--executor-cores", type=int, default=4,
+                   help="Cores per executor (default: 4)")
+    p.add_argument("--num-executors", type=int, default=2,
+                   help="Number of executors (default: 2)")
+    p.add_argument("--driver-memory", default="16g",
+                   help="Driver memory (default: 16g)")
     return p.parse_args()
 
 
@@ -46,6 +55,10 @@ def create_spark(args):
         .config("spark.jars", jar_path)
         .config("spark.default.parallelism", str(args.parallelism))
         .config("spark.sql.shuffle.partitions", str(args.parallelism))
+        .config("spark.executor.memory", args.executor_memory)
+        .config("spark.executor.cores", str(args.executor_cores))
+        .config("spark.executor.instances", str(args.num_executors))
+        .config("spark.driver.memory", args.driver_memory)
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
