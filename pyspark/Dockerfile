@@ -37,7 +37,8 @@ RUN yum clean all && yum makecache && \
     which \
     tar \
     gzip \
-    sudo && \
+    sudo \
+    perf && \
     yum clean all && \
     rm -rf /var/cache/yum
 

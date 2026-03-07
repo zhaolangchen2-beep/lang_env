@@ -227,24 +227,11 @@ if [ "$IS_LOWER" != "$EXPECTED_VER" ] || [ "$DOCKER_VER" == "0.0.0" ]; then
     cat > /etc/yum.repos.d/docker-ce.repo << EOF
 [docker-ce-stable]
 name=Docker CE Stable - \$basearch
-baseurl=https://download.docker.com/linux/centos/8/\$basearch/stable
+baseurl=https://mirrors.aliyun.com/docker-ce/linux/centos/8/\$basearch/stable
 enabled=1
 gpgcheck=1
-gpgkey=https://download.docker.com/linux/centos/gpg
+gpgkey=https://mirrors.aliyun.com/docker-ce/linux/centos/gpg
 
-[docker-ce-stable-debuginfo]
-name=Docker CE Stable - Debuginfo \$basearch
-baseurl=https://download.docker.com/linux/centos/8/debug-\$basearch/stable
-enabled=0
-gpgcheck=1
-gpgkey=https://download.docker.com/linux/centos/gpg
-
-[docker-ce-stable-source]
-name=Docker CE Stable - Sources
-baseurl=https://download.docker.com/linux/centos/8/source/stable
-enabled=0
-gpgcheck=1
-gpgkey=https://download.docker.com/linux/centos/gpg
 EOF
 
     # 配置 yum 容错
