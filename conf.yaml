@@ -1,5 +1,5 @@
 global:
-  proxy: "http://90.91.56.202:3128"  # 如果为空则不设置
+  proxy: "http://141.1.206.0:3128"  # 如果为空则不设置
   docker_min_version: "26.1.3"
   base_os_image: "openeuler-24.03-lts-sp1:latest"
 
@@ -7,6 +7,7 @@ python_build:
   # 允许测试的 Python 版本列表
   supported_versions:
       - "3.14.2"
+      - "3.14.3"
   # 预编译参数，用于 deploy.sh 生成通用 Python
   cflags: "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
   ldflags: ""

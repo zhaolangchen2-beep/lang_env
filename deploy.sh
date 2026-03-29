@@ -23,7 +23,7 @@
 #   <module>/start.sh          — 模块容器启动脚本
 # ================================================================
 
-set -e  # 遇到错误立即退出
+set -e
 
 # ────────────────────────────────────────────────────────────────
 # 全局路径常量
@@ -51,10 +51,14 @@ MODULE_NAME=""
 PYTHON_VERSION=""
 COMPACT_MODE=false   # 默认关闭：使用镜像分层模式
                      # 开启后：仅复制编译产物，不保留中间镜像（节省空间）
-
+SKIP_PY_PKG=""  # 新增：存储本地 Python 镜像 tar 包路径
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case "$1" in
+		--skip-py-build)
+            SKIP_PY_PKG="$2"
+            shift 2
+            ;;
         --compact)
             COMPACT_MODE=true
             shift
@@ -285,8 +289,11 @@ done
 echo " -> Checking Base OS Image..."
 
 BASE_OS=$(get_yaml_val "$CONF_FILE" "['global']['base_os_image']")
+# ── 1.3 基础操作系统镜像 ───────────────────────────────────────
+if [ -n "$SKIP_PY_PKG" ]; then
+    echo " -> [SKIP] Skipping Base OS check because --skip-py-build is provided."
 
-if [[ "$(docker images -q "$BASE_OS" 2>/dev/null)" == "" ]]; then
+elif [[ "$(docker images -q "$BASE_OS" 2>/dev/null)" == "" ]]; then
     echo " -> Base image $BASE_OS not found locally. Preparing offline load..."
 
     # 识别宿主机 CPU 架构，映射到 url.yaml 中的 key
@@ -370,24 +377,7 @@ if [[ ! " $SUPPORTED_VERSIONS " =~ " $PYTHON_VERSION " ]]; then
     exit 1
 fi
 
-# ── 2.5.2 读取编译参数 ────────────────────────────────────────
-CFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['cflags']")
-LDFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['ldflags']")
-CONFIG_ARGS=$(get_yaml_val "$CONF_FILE" "['python_build']['configure_args']")
-PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_prefix']" 2>/dev/null || echo "/opt/python")
-
-# ── 2.5.3 确保 Python 源码包已下载 ───────────────────────────
-PY_SOURCE_URL=$(get_yaml_val "$URL_FILE" "['urls']['python_sources']['$PYTHON_VERSION']")
-PY_FILENAME=$(basename "$PY_SOURCE_URL")
-
-if [ ! -f "$TMP_DIR/$PY_FILENAME" ]; then
-    echo " -> Downloading Python source: $PY_FILENAME"
-    wget --no-check-certificate -P "$TMP_DIR" "$PY_SOURCE_URL"
-else
-    echo " -> Python source already cached: $PY_FILENAME"
-fi
-
-# ── 2.5.4 按模式分别处理 ─────────────────────────────────────
+# ── 2.5.2 按模式分别处理 ─────────────────────────────────────
 
 if [ "$COMPACT_MODE" = true ]; then
     CPYTHON_IMAGE="cpython_compact:${PYTHON_VERSION}"
@@ -395,23 +385,76 @@ else
     CPYTHON_IMAGE="cpython_full:${PYTHON_VERSION}"
 fi
 
-if [[ "$(docker images -q "$CPYTHON_IMAGE" 2>/dev/null)" != "" ]]; then
-    echo " -> Image $CPYTHON_IMAGE already exists. Skipping build."
+if [ -n "$SKIP_PY_PKG" ]; then
+    # ── 场景 A: 离线镜像导入模式 ──────────────────────────────
+    echo " -> [OFFLINE MODE] Skipping Python source download and build."
+    echo " -> Loading image from: $SKIP_PY_PKG"
+
+    if [ ! -f "$SKIP_PY_PKG" ]; then
+        echo "❌ Error: File $SKIP_PY_PKG not found."
+        exit 1
+    fi
+
+	# 执行加载并捕捉输出
+    LOAD_OUT=$(docker load -i "$SKIP_PY_PKG")
+    echo "$LOAD_OUT"
+
+    # 优先尝试匹配 12 位 ID (十六进制)
+    NEW_ID=$(echo "$LOAD_OUT" | grep -oE '[0-9a-f]{12}' | head -n1)
+
+    # 如果没匹配到 ID，尝试从 "Loaded image: repository:tag" 中提取名称
+    if [ -z "$NEW_ID" ]; then
+        # 提取 "Loaded image: " 之后的内容
+        NEW_ID=$(echo "$LOAD_OUT" | awk -F ': ' '/Loaded image/ {print $2}')
+    fi
+
+    if [ -n "$NEW_ID" ]; then
+        echo " -> Successfully identified source: $NEW_ID"
+        echo " -> Tagging $NEW_ID as $CPYTHON_IMAGE"
+        docker tag "$NEW_ID" "$CPYTHON_IMAGE"
+    else
+        echo "❌ Error: Failed to parse Image ID or Name from docker load output."
+        echo "   Debug info: $LOAD_OUT"
+        exit 1
+    fi
+
 else
-    echo " -> Building $CPYTHON_IMAGE ..."
+	# ── 2.5.2 读取编译参数 ────────────────────────────────────────
+	CFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['cflags']")
+	LDFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['ldflags']")
+	CONFIG_ARGS=$(get_yaml_val "$CONF_FILE" "['python_build']['configure_args']")
+	PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_prefix']" 2>/dev/null || echo "/opt/python")
 
-    echo "    Mode             = $([ "$COMPACT_MODE" = true ] && echo 'compact (multi-stage, small)' || echo 'default (single-stage, with build tools)')"
-    echo "    BASE_OS          = $BASE_OS"
-    echo "    INSTALL_PREFIX   = $PYTHON_INSTALL_PREFIX"
-    echo "    CFLAGS           = $CFLAGS_VAL"
-    echo "    LDFLAGS          = $LDFLAGS_VAL"
-    echo "    configure args   = $CONFIG_ARGS"
+	# ── 2.5.3 确保 Python 源码包已下载 ───────────────────────────
+	PY_SOURCE_URL=$(get_yaml_val "$URL_FILE" "['urls']['python_sources']['$PYTHON_VERSION']")
+	PY_FILENAME=$(basename "$PY_SOURCE_URL")
 
-    CPYTHON_DOCKERFILE="$TMP_DIR/Dockerfile.cpython_base"
+	if [ ! -f "$TMP_DIR/$PY_FILENAME" ]; then
+		echo " -> Downloading Python source: $PY_FILENAME"
+		wget --no-check-certificate -P "$TMP_DIR" "$PY_SOURCE_URL"
+	else
+		echo " -> Python source already cached: $PY_FILENAME"
+	fi
 
-    if [ "$COMPACT_MODE" = true ]; then
-        # ── compact: 多阶段构建，最终镜像不含编译工具 ──
-        cat > "$CPYTHON_DOCKERFILE" << 'DOCKERFILE_EOF'
+
+
+	if [[ "$(docker images -q "$CPYTHON_IMAGE" 2>/dev/null)" != "" ]]; then
+		echo " -> Image $CPYTHON_IMAGE already exists. Skipping build."
+	else
+		echo " -> Building $CPYTHON_IMAGE ..."
+
+		echo "    Mode             = $([ "$COMPACT_MODE" = true ] && echo 'compact (multi-stage, small)' || echo 'default (single-stage, with build tools)')"
+		echo "    BASE_OS          = $BASE_OS"
+		echo "    INSTALL_PREFIX   = $PYTHON_INSTALL_PREFIX"
+		echo "    CFLAGS           = $CFLAGS_VAL"
+		echo "    LDFLAGS          = $LDFLAGS_VAL"
+		echo "    configure args   = $CONFIG_ARGS"
+
+		CPYTHON_DOCKERFILE="$TMP_DIR/Dockerfile.cpython_base"
+
+		if [ "$COMPACT_MODE" = true ]; then
+			# ── compact: 多阶段构建，最终镜像不含编译工具 ──
+			cat > "$CPYTHON_DOCKERFILE" << 'DOCKERFILE_EOF'
 ARG BASE_IMAGE
 
 # ======== Stage 1: 编译 ========
@@ -426,31 +469,31 @@ ARG PROXY
 ARG PY_FILENAME
 
 ENV http_proxy=${PROXY} \
-    https_proxy=${PROXY} \
-    CFLAGS=${CFLAGS_VAL} \
-    LDFLAGS=${LDFLAGS_VAL}
+	https_proxy=${PROXY} \
+	CFLAGS=${CFLAGS_VAL} \
+	LDFLAGS=${LDFLAGS_VAL}
 
 RUN echo "sslverify=false" >> /etc/yum.conf && \
-    yum clean all && yum makecache && \
-    yum install -y \
-        gcc gcc-c++ make \
-        findutils diffutils file \
-        tar gzip \
-        zlib-devel bzip2-devel openssl-devel \
-        ncurses-devel sqlite-devel readline-devel \
-        tk-devel gdbm-devel libpcap-devel \
-        xz-devel libffi-devel libuuid-devel \
-        libzstd-devel && \
-    yum clean all
+	yum clean all && yum makecache && \
+	yum install -y \
+		gcc gcc-c++ make \
+		findutils diffutils file \
+		tar gzip \
+		zlib-devel bzip2-devel openssl-devel \
+		ncurses-devel sqlite-devel readline-devel \
+		tk-devel gdbm-devel libpcap-devel \
+		xz-devel libffi-devel libuuid-devel \
+		libzstd-devel && \
+	yum clean all
 
 COPY tmp/${PY_FILENAME} /tmp/src/${PY_FILENAME}
 RUN cd /tmp/src && \
-    tar xf ${PY_FILENAME} && \
-    cd Python-${PYTHON_VERSION} && \
-    ./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
-    make -j$(nproc) > /dev/null && \
-    make install > /dev/null && \
-    rm -rf /tmp/src
+	tar xf ${PY_FILENAME} && \
+	cd Python-${PYTHON_VERSION} && \
+	./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
+	make -j$(nproc) > /dev/null && \
+	make install > /dev/null && \
+	rm -rf /tmp/src
 
 # ======== Stage 2: 仅保留运行时 ========
 FROM ${BASE_IMAGE}
@@ -458,30 +501,30 @@ FROM ${BASE_IMAGE}
 ARG PYTHON_VERSION
 ARG PYTHON_INSTALL_PREFIX
 ENV http_proxy=${PROXY} \
-    https_proxy=${PROXY} \
+	https_proxy=${PROXY} \
 RUN echo "sslverify=false" >> /etc/yum.conf && \
-    yum clean all && yum makecache && \
-    yum install -y \
-        zlib bzip2-libs openssl-libs \
-        ncurses-libs sqlite-libs readline \
-        libffi xz-libs libuuid libzstd && \
-    yum clean all
+	yum clean all && yum makecache && \
+	yum install -y \
+		zlib bzip2-libs openssl-libs \
+		ncurses-libs sqlite-libs readline \
+		libffi xz-libs libuuid libzstd && \
+	yum clean all
 
 COPY --from=builder ${PYTHON_INSTALL_PREFIX} ${PYTHON_INSTALL_PREFIX}
 
 ENV PATH="${PYTHON_INSTALL_PREFIX}/bin:${PATH}" \
-    LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
+	LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
 RUN python3 --version && pip3 --version
 
 LABEL description="CPython ${PYTHON_VERSION} compact (runtime only)" \
-      python.version="${PYTHON_VERSION}" \
-      python.prefix="${PYTHON_INSTALL_PREFIX}"
+	  python.version="${PYTHON_VERSION}" \
+	  python.prefix="${PYTHON_INSTALL_PREFIX}"
 DOCKERFILE_EOF
 
-    else
-        # ── default: 单阶段构建，保留编译工具链 ──
-        cat > "$CPYTHON_DOCKERFILE" << 'DOCKERFILE_EOF'
+		else
+			# ── default: 单阶段构建，保留编译工具链 ──
+			cat > "$CPYTHON_DOCKERFILE" << 'DOCKERFILE_EOF'
 ARG BASE_IMAGE
 
 FROM ${BASE_IMAGE}
@@ -495,57 +538,58 @@ ARG PROXY
 ARG PY_FILENAME
 
 ENV http_proxy=${PROXY} \
-    https_proxy=${PROXY} \
-    CFLAGS=${CFLAGS_VAL} \
-    LDFLAGS=${LDFLAGS_VAL}
+	https_proxy=${PROXY} \
+	CFLAGS=${CFLAGS_VAL} \
+	LDFLAGS=${LDFLAGS_VAL}
 
 RUN echo "sslverify=false" >> /etc/yum.conf && \
-    yum clean all && yum makecache && \
-    yum install -y \
-        gcc gcc-c++ make \
-        findutils diffutils file \
-        tar gzip \
-        zlib-devel bzip2-devel openssl-devel \
-        ncurses-devel sqlite-devel readline-devel \
-        tk-devel gdbm-devel libpcap-devel \
-        xz-devel libffi-devel libuuid-devel \
-        libzstd-devel && \
-    yum clean all
+	yum clean all && yum makecache && \
+	yum install -y \
+		gcc gcc-c++ make \
+		findutils diffutils file \
+		tar gzip \
+		zlib-devel bzip2-devel openssl-devel \
+		ncurses-devel sqlite-devel readline-devel \
+		tk-devel gdbm-devel libpcap-devel \
+		xz-devel libffi-devel libuuid-devel \
+		libzstd-devel && \
+	yum clean all
 
 COPY tmp/${PY_FILENAME} /tmp/src/${PY_FILENAME}
 RUN cd /tmp/src && \
-    tar xf ${PY_FILENAME} && \
-    cd Python-${PYTHON_VERSION} && \
-    ./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
-    make -j$(nproc) > /dev/null && \
-    make install > /dev/null && \
-    rm -rf /tmp/src
+	tar xf ${PY_FILENAME} && \
+	cd Python-${PYTHON_VERSION} && \
+	./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
+	make -j$(nproc) > /dev/null && \
+	make install > /dev/null && \
+	rm -rf /tmp/src
 
 ENV PATH="${PYTHON_INSTALL_PREFIX}/bin:${PATH}" \
-    LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
+	LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
 RUN python3 --version && pip3 --version
 
 LABEL description="CPython ${PYTHON_VERSION} full (with build tools)" \
-      python.version="${PYTHON_VERSION}" \
-      python.prefix="${PYTHON_INSTALL_PREFIX}"
+	  python.version="${PYTHON_VERSION}" \
+	  python.prefix="${PYTHON_INSTALL_PREFIX}"
 DOCKERFILE_EOF
-	fi
+		fi
 
-	# 执行构建（以项目根目录为 context，确保 tmp/ 可访问）
-	docker build \
-		-f "$CPYTHON_DOCKERFILE" \
-		--build-arg BASE_IMAGE="$BASE_OS" \
-		--build-arg PYTHON_VERSION="$PYTHON_VERSION" \
-		--build-arg PYTHON_INSTALL_PREFIX="$PYTHON_INSTALL_PREFIX" \
-		--build-arg CFLAGS_VAL="$CFLAGS_VAL" \
-		--build-arg LDFLAGS_VAL="$LDFLAGS_VAL" \
-		--build-arg CONFIG_ARGS="$CONFIG_ARGS" \
-		--build-arg PROXY="$PROXY" \
-		--build-arg PY_FILENAME="$PY_FILENAME" \
-		-t "$CPYTHON_IMAGE" \
-		.
-	echo "✅ [layered] Image $CPYTHON_IMAGE built successfully."
+		# 执行构建（以项目根目录为 context，确保 tmp/ 可访问）
+		docker build \
+			-f "$CPYTHON_DOCKERFILE" \
+			--build-arg BASE_IMAGE="$BASE_OS" \
+			--build-arg PYTHON_VERSION="$PYTHON_VERSION" \
+			--build-arg PYTHON_INSTALL_PREFIX="$PYTHON_INSTALL_PREFIX" \
+			--build-arg CFLAGS_VAL="$CFLAGS_VAL" \
+			--build-arg LDFLAGS_VAL="$LDFLAGS_VAL" \
+			--build-arg CONFIG_ARGS="$CONFIG_ARGS" \
+			--build-arg PROXY="$PROXY" \
+			--build-arg PY_FILENAME="$PY_FILENAME" \
+			-t "$CPYTHON_IMAGE" \
+			.
+		echo "✅ [layered] Image $CPYTHON_IMAGE built successfully."
+	fi
 fi
 MODULE_BASE_IMAGE="$CPYTHON_IMAGE"
 

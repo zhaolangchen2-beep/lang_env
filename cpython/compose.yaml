@@ -1,0 +1,28 @@
+services:
+  cinderx:
+    image: ${IMAGE_NAME}
+    container_name: cpython
+    stdin_open: true  # 对应 -i
+    tty: true         # 对应 -t
+    restart: always
+    privileged: true  # 对应 --privileged
+    
+    # 权限与安全配置 (对应 --cap-add 和 --security-opt)
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    
+    # 内存限制 (对应 --memory)
+    deploy:
+      resources:
+        limits:
+          memory: 64G
+    
+    # 挂载卷 (对应 -v)
+    # 注意：./share 必须在 compose 文件所在目录下已存在
+    volumes:
+      - ./share:/home/share
+    
+    # 启动命令
+    command: bash
