@@ -45,6 +45,33 @@ get_yaml_val() {
         2>/dev/null
 }
 
+configure_docker_daemon() {
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json << 'EOF'
+{
+  "dns": ["8.8.8.8", "114.114.114.114"],
+  "insecure-registries": ["ghcr.io"]
+}
+EOF
+}
+
+configure_docker_service_proxy() {
+    local proxy_value="$1"
+
+    mkdir -p /etc/systemd/system/docker.service.d
+
+    if [ -n "$proxy_value" ] && [ "$proxy_value" != "None" ]; then
+        cat > /etc/systemd/system/docker.service.d/http-proxy.conf << EOF
+[Service]
+Environment="HTTP_PROXY=${proxy_value}"
+Environment="HTTPS_PROXY=${proxy_value}"
+Environment="NO_PROXY=localhost,127.0.0.1"
+EOF
+    else
+        rm -f /etc/systemd/system/docker.service.d/http-proxy.conf
+    fi
+}
+
 render_prebuilt_image() {
     python3 - "$CONF_FILE" "$1" "$2" << 'PY'
 import sys
@@ -288,16 +315,21 @@ EOF
     # 安装指定版本
     echo " -> Running yum install..."
     yum install -y docker-ce-3:$EXPECTED_VER-1.el8
-
-    # 重启服务
-    systemctl daemon-reload
-    systemctl enable docker
-    systemctl restart docker
     
     echo "✅ Docker upgraded successfully."
 else
     echo " -> Docker version check passed."
 fi
+
+echo " -> Configuring Docker daemon..."
+configure_docker_daemon
+configure_docker_service_proxy "$PROXY"
+
+echo " -> Reloading and restarting Docker service..."
+systemctl daemon-reload
+systemctl enable docker
+systemctl restart docker
+echo " -> Docker daemon configuration applied."
 
 # ================================================================
 #  Step 2 : 模块依赖软件包下载
