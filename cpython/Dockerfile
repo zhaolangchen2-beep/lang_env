@@ -30,8 +30,7 @@ RUN tar -xzf /tmp/cinderx.tgz -C /opt/ && \
 RUN mkdir -p ~/.pip && \
     echo "[global]" > ~/.pip/pip.conf && \
     echo "index-url = https://pypi.tuna.tsinghua.edu.cn/simple" >> ~/.pip/pip.conf && \
-    echo "trusted-host = pypi.tuna.tsinghua.edu.cn" >> ~/.pip/pip.conf && \
-    pip config unset global.proxy
+    echo "trusted-host = pypi.tuna.tsinghua.edu.cn" >> ~/.pip/pip.conf 
 # 安装 PySpark 和业务库
 # 使用 --no-cache-dir 减小镜像体积
 RUN PIP_NO_VERIFY_SSL=true \
@@ -54,5 +53,8 @@ ENV PATH="/opt/gcc-14/bin:/usr/local/bin:${PATH}" \
 
 RUN cd /opt/cinderx/ && \
     rm -rf scratch/ build/ *.egg-info CMakeCache.txt && \
+    #CINDERX_ENABLE_PGO=1 \
+    #CINDERX_ENABLE_LTO=1 \
+    ENABLE_STATIC_PYTHON=0 \
     python3 -m pip install . 
 CMD ["bash"]
