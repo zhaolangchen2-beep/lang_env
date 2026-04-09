@@ -31,6 +31,7 @@ set -e
 CONF_FILE="conf.yaml"
 URL_FILE="url.yaml"
 TMP_DIR="$(pwd)/tmp"
+mkdir -p "$TMP_DIR"
 # ────────────────────────────────────────────────────────────────
 # 辅助函数
 # ────────────────────────────────────────────────────────────────
@@ -44,6 +45,34 @@ get_yaml_val() {
         2>/dev/null
 }
 
+render_prebuilt_image() {
+    python3 - "$CONF_FILE" "$1" "$2" << 'PY'
+import sys
+import yaml
+
+conf_file, arch, py_ver = sys.argv[1:4]
+with open(conf_file, encoding="utf-8") as f:
+    data = yaml.safe_load(f) or {}
+
+template = ((data.get("python_build") or {}).get("prebuilt_image_template") or "").strip()
+if not template:
+    sys.exit(0)
+
+parts = py_ver.split(".")
+python_mm = ""
+if len(parts) >= 2:
+    python_mm = f"{parts[0]}{parts[1]}"
+
+print(
+    template.format(
+        arch=arch,
+        python_version=py_ver,
+        python_mm=python_mm,
+    )
+)
+PY
+}
+
 # ================================================================
 #  参数解析
 # ================================================================
@@ -51,13 +80,19 @@ MODULE_NAME=""
 PYTHON_VERSION=""
 COMPACT_MODE=false   # 默认关闭：使用镜像分层模式
                      # 开启后：仅复制编译产物，不保留中间镜像（节省空间）
-SKIP_PY_PKG=""  # 新增：存储本地 Python 镜像 tar 包路径
+SKIP_PY_BUILD=false
+SKIP_PY_PKG=""  # 存储本地 Python 镜像 tar 包路径
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case "$1" in
-		--skip-py-build)
-            SKIP_PY_PKG="$2"
-            shift 2
+		--skip-py-build|--skip-build)
+            SKIP_PY_BUILD=true
+            if [[ $# -gt 1 && ! "$2" =~ ^- ]]; then
+                SKIP_PY_PKG="$2"
+                shift 2
+            else
+                shift
+            fi
             ;;
         --compact)
             COMPACT_MODE=true
@@ -67,6 +102,11 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: ./deploy.sh [OPTIONS] <module_name> <python_version>"
             echo ""
             echo "Options:"
+            echo "  --skip-build [tar] / --skip-py-build [tar]"
+            echo "               Skip local Python build."
+            echo "               With tar: docker load local image tar package."
+            echo "               Without tar: docker pull prebuilt image from"
+            echo "               python_build.prebuilt_image_template."
             echo "  --compact    Space-saving mode: only copy Python binaries"
             echo "               into module image (no intermediate cpython image)."
             echo "               Default: build a cpython_base:<version> image first,"
@@ -75,6 +115,8 @@ while [[ $# -gt 0 ]]; do
             echo "Examples:"
             echo "  ./deploy.sh pyspark 3.14.2              # image layering mode (default)"
             echo "  ./deploy.sh --compact pyspark 3.14.2    # compact binary-copy mode"
+            echo "  ./deploy.sh --skip-build pyspark 3.14.3 # pull prebuilt Python image"
+            echo "  ./deploy.sh --skip-build /tmp/cpython.tar pyspark 3.14.3"
             exit 0
             ;;
         -*)
@@ -290,7 +332,7 @@ echo " -> Checking Base OS Image..."
 
 BASE_OS=$(get_yaml_val "$CONF_FILE" "['global']['base_os_image']")
 # ── 1.3 基础操作系统镜像 ───────────────────────────────────────
-if [ -n "$SKIP_PY_PKG" ]; then
+if [ "$SKIP_PY_BUILD" = true ] && [ -n "$SKIP_PY_PKG" ]; then
     echo " -> [SKIP] Skipping Base OS check because --skip-py-build is provided."
 
 elif [[ "$(docker images -q "$BASE_OS" 2>/dev/null)" == "" ]]; then
@@ -342,9 +384,17 @@ with open('$URL_FILE') as f:
 
     # 给加载出的镜像打上 conf.yaml 中定义的标签，确保后续引用一致
     LOADED_ID=$(echo "$LOAD_RESULT" | grep -oE '[0-9a-f]{12}' | head -n1)
+    if [ -z "$LOADED_ID" ]; then
+        LOADED_ID=$(echo "$LOAD_RESULT" | awk -F ': ' '/Loaded image/ {print $2}')
+    fi
+
     if [ -n "$LOADED_ID" ]; then
         echo " -> Tagging $LOADED_ID → $BASE_OS"
         docker tag "$LOADED_ID" "$BASE_OS"
+    else
+        echo "❌ Error: Failed to parse base image ID or name from docker load output."
+        echo "   Debug info: $LOAD_RESULT"
+        exit 1
     fi
 else
     echo " -> Base image $BASE_OS already exists."
@@ -385,7 +435,7 @@ else
     CPYTHON_IMAGE="cpython_full:${PYTHON_VERSION}"
 fi
 
-if [ -n "$SKIP_PY_PKG" ]; then
+if [ "$SKIP_PY_BUILD" = true ] && [ -n "$SKIP_PY_PKG" ]; then
     # ── 场景 A: 离线镜像导入模式 ──────────────────────────────
     echo " -> [OFFLINE MODE] Skipping Python source download and build."
     echo " -> Loading image from: $SKIP_PY_PKG"
@@ -418,12 +468,39 @@ if [ -n "$SKIP_PY_PKG" ]; then
         exit 1
     fi
 
+elif [ "$SKIP_PY_BUILD" = true ]; then
+    echo " -> [REGISTRY MODE] Skipping local Python build."
+
+    ARCH=$(uname -m)
+    PREBUILT_IMAGE=$(render_prebuilt_image "$ARCH" "$PYTHON_VERSION")
+
+    if [ -z "$PREBUILT_IMAGE" ]; then
+        echo "❌ Error: python_build.prebuilt_image_template is not configured in $CONF_FILE."
+        exit 1
+    fi
+
+    echo " -> Pulling prebuilt Python image: $PREBUILT_IMAGE"
+    if docker pull "$PREBUILT_IMAGE"; then
+        echo " -> Tagging $PREBUILT_IMAGE as $CPYTHON_IMAGE"
+        docker tag "$PREBUILT_IMAGE" "$CPYTHON_IMAGE"
+    else
+        echo "❌ Error: Failed to pull prebuilt Python image: $PREBUILT_IMAGE"
+        echo "   If this is a private image, please run: docker login ghcr.io"
+        exit 1
+    fi
+
 else
 	# ── 2.5.2 读取编译参数 ────────────────────────────────────────
 	CFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['cflags']")
 	LDFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['ldflags']")
 	CONFIG_ARGS=$(get_yaml_val "$CONF_FILE" "['python_build']['configure_args']")
-	PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_prefix']" 2>/dev/null || echo "/opt/python")
+	PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_prefix']")
+	if [ "$PYTHON_INSTALL_PREFIX" = "None" ] || [ -z "$PYTHON_INSTALL_PREFIX" ]; then
+		PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_dir']")
+	fi
+	if [ "$PYTHON_INSTALL_PREFIX" = "None" ] || [ -z "$PYTHON_INSTALL_PREFIX" ]; then
+		PYTHON_INSTALL_PREFIX="/opt/python"
+	fi
 
 	# ── 2.5.3 确保 Python 源码包已下载 ───────────────────────────
 	PY_SOURCE_URL=$(get_yaml_val "$URL_FILE" "['urls']['python_sources']['$PYTHON_VERSION']")
@@ -435,8 +512,6 @@ else
 	else
 		echo " -> Python source already cached: $PY_FILENAME"
 	fi
-
-
 
 	if [[ "$(docker images -q "$CPYTHON_IMAGE" 2>/dev/null)" != "" ]]; then
 		echo " -> Image $CPYTHON_IMAGE already exists. Skipping build."
@@ -500,6 +575,7 @@ FROM ${BASE_IMAGE}
 
 ARG PYTHON_VERSION
 ARG PYTHON_INSTALL_PREFIX
+ARG PROXY
 ENV http_proxy=${PROXY} \
 	https_proxy=${PROXY} \
 RUN echo "sslverify=false" >> /etc/yum.conf && \
@@ -588,7 +664,7 @@ DOCKERFILE_EOF
 			--build-arg PY_FILENAME="$PY_FILENAME" \
 			-t "$CPYTHON_IMAGE" \
 			.
-		echo "✅ [layered] Image $CPYTHON_IMAGE built successfully."
+		echo "✅ Python image $CPYTHON_IMAGE built successfully."
 	fi
 fi
 MODULE_BASE_IMAGE="$CPYTHON_IMAGE"

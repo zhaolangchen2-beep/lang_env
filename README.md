@@ -54,6 +54,14 @@ python_build:
   # 允许测试的 Python 版本列表
   supported_versions:
     - "3.14.2"
+    - "3.14.3"
+  # 当 deploy.sh 使用 --skip-build 且未传入本地 tar 包时，
+  # 会按模板填充架构和 Python 版本后直接 docker pull
+  # 可用占位符：
+  #   {arch}            -> aarch64 / x86_64
+  #   {python_version}  -> 3.14.3
+  #   {python_mm}       -> 314 (由 major.minor 组成)
+  prebuilt_image_template: "ghcr.io/zhaolangchen2-beep/lang_env/oe2403sp1-devel-py{python_mm}-gcc14-{arch}:latest"
   # 预编译参数，用于 deploy.sh 生成通用 Python
   cflags: "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
   ldflags: ""
@@ -78,6 +86,36 @@ python_build:
 > 3. 从生成的镜像拉起容器或集群。
 > 
 > 
+
+### 2.1 跳过本地 Python 编译
+
+如果你已经准备好了 Python 基础镜像，有两种方式跳过本地编译：
+
+```bash
+# 方式一：从本地 tar 包导入
+./deploy.sh --skip-build /tmp/cpython.tar pyflink 3.14.3
+
+# 方式二：根据 conf.yaml 中的模板直接 docker pull
+./deploy.sh --skip-build pyflink 3.14.3
+```
+
+当 `--skip-build` 没有传入 tar 包路径时，脚本会读取 `conf.yaml` 中的 `python_build.prebuilt_image_template`，
+并按当前宿主机架构和目标 Python 版本组装镜像名后执行 `docker pull`。
+
+例如在 `aarch64 + Python 3.14.3` 的情况下，会组装为：
+
+```bash
+docker pull ghcr.io/zhaolangchen2-beep/lang_env/oe2403sp1-devel-py314-gcc14-aarch64:latest
+```
+
+拉取成功后，脚本会自动将该镜像重打 tag 为内部使用的 `cpython_full:<python_version>` 或 `cpython_compact:<python_version>`。
+
+> **注意：**
+> 如果 GHCR 镜像是私有的，请先执行：
+> 
+> ```bash
+> docker login ghcr.io
+> ```
 
 ### 3. 执行测试 (TODO)
 

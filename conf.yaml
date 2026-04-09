@@ -8,6 +8,13 @@ python_build:
   supported_versions:
       - "3.14.2"
       - "3.14.3"
+  # 当 deploy.sh 使用 --skip-build 且未传入本地 tar 包时，
+  # 会按模板填充架构和 Python 版本后直接 docker pull
+  # 可用占位符：
+  #   {arch}            -> aarch64 / x86_64
+  #   {python_version}  -> 3.14.3
+  #   {python_mm}       -> 314 (由 major.minor 组成)
+  prebuilt_image_template: "ghcr.io/zhaolangchen2-beep/lang_env/oe2403sp1-devel-py{python_mm}-gcc14-{arch}:latest"
   # 预编译参数，用于 deploy.sh 生成通用 Python
   cflags: "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
   ldflags: ""
