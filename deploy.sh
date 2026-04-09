@@ -32,6 +32,7 @@ CONF_FILE="conf.yaml"
 URL_FILE="url.yaml"
 TMP_DIR="$(pwd)/tmp"
 mkdir -p "$TMP_DIR"
+DOCKER_RESTART_REQUIRED=false
 # ────────────────────────────────────────────────────────────────
 # 辅助函数
 # ────────────────────────────────────────────────────────────────
@@ -45,30 +46,61 @@ get_yaml_val() {
         2>/dev/null
 }
 
+write_file_if_changed() {
+    local target_file="$1"
+    local tmp_file
+    tmp_file=$(mktemp)
+    cat > "$tmp_file"
+
+    if [ -f "$target_file" ] && cmp -s "$tmp_file" "$target_file"; then
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$target_file")"
+    mv "$tmp_file" "$target_file"
+    return 0
+}
+
 configure_docker_daemon() {
-    mkdir -p /etc/docker
-    cat > /etc/docker/daemon.json << 'EOF'
+    if write_file_if_changed /etc/docker/daemon.json << 'EOF'
 {
   "dns": ["8.8.8.8", "114.114.114.114"],
   "insecure-registries": ["ghcr.io"]
 }
 EOF
+    then
+        DOCKER_RESTART_REQUIRED=true
+        echo " -> Updated /etc/docker/daemon.json"
+    else
+        echo " -> /etc/docker/daemon.json unchanged"
+    fi
 }
 
 configure_docker_service_proxy() {
     local proxy_value="$1"
 
-    mkdir -p /etc/systemd/system/docker.service.d
-
     if [ -n "$proxy_value" ] && [ "$proxy_value" != "None" ]; then
-        cat > /etc/systemd/system/docker.service.d/http-proxy.conf << EOF
+        if write_file_if_changed /etc/systemd/system/docker.service.d/http-proxy.conf << EOF
 [Service]
 Environment="HTTP_PROXY=${proxy_value}"
 Environment="HTTPS_PROXY=${proxy_value}"
 Environment="NO_PROXY=localhost,127.0.0.1"
 EOF
+        then
+            DOCKER_RESTART_REQUIRED=true
+            echo " -> Updated Docker service proxy configuration"
+        else
+            echo " -> Docker service proxy configuration unchanged"
+        fi
     else
-        rm -f /etc/systemd/system/docker.service.d/http-proxy.conf
+        if [ -f /etc/systemd/system/docker.service.d/http-proxy.conf ]; then
+            rm -f /etc/systemd/system/docker.service.d/http-proxy.conf
+            DOCKER_RESTART_REQUIRED=true
+            echo " -> Removed Docker service proxy configuration"
+        else
+            echo " -> No Docker service proxy configuration to remove"
+        fi
     fi
 }
 
@@ -320,6 +352,7 @@ EOF
     # 安装指定版本
     echo " -> Running yum install..."
     yum install -y docker-ce-3:$EXPECTED_VER-1.el8
+    DOCKER_RESTART_REQUIRED=true
     
     echo "✅ Docker upgraded successfully."
 else
@@ -330,11 +363,15 @@ echo " -> Configuring Docker daemon..."
 configure_docker_daemon
 configure_docker_service_proxy "$PROXY"
 
-echo " -> Reloading and restarting Docker service..."
-systemctl daemon-reload
-systemctl enable docker
-systemctl restart docker
-echo " -> Docker daemon configuration applied."
+if [ "$DOCKER_RESTART_REQUIRED" = true ]; then
+    echo " -> Reloading and restarting Docker service..."
+    systemctl daemon-reload
+    systemctl enable docker
+    systemctl restart docker
+    echo " -> Docker daemon configuration applied."
+else
+    echo " -> Docker configuration unchanged. Skipping Docker restart."
+fi
 
 # ================================================================
 #  Step 2 : 模块依赖软件包下载
