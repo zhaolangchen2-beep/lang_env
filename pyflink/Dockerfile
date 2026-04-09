@@ -44,9 +44,11 @@ RUN yum clean all && yum makecache && \
     sudo 
 
 
-ENV PATH="/opt/python/bin:$PATH"
+RUN cp -rf /opt/python /usr/local/bin/ 
+# 配置 Python 环境变量
+ENV PATH="/usr/local/python/bin:$PATH"
 # 注意：如果 yum 报错，请注释掉下面这行 LD_LIBRARY_PATH
-ENV LD_LIBRARY_PATH="/opt/python/lib:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="/usr/local/python/lib:$LD_LIBRARY_PATH"
 # 验证 Python 是否可用
 RUN python3 --version
 

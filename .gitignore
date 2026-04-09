@@ -1,0 +1,6 @@
+.vscode/
+pyspark/.env
+tmp/
+out/
+test_results/
+*.log
