@@ -132,6 +132,32 @@ print(
 PY
 }
 
+download_with_error() {
+    local download_url="$1"
+    local output_dir="$2"
+    local display_name="$3"
+    local log_file
+
+    if [ -z "$download_url" ] || [ "$download_url" = "None" ]; then
+        echo "❌ Error: Missing download URL for $display_name"
+        exit 1
+    fi
+
+    log_file=$(mktemp)
+    if wget --no-check-certificate -P "$output_dir" "$download_url" >"$log_file" 2>&1; then
+        rm -f "$log_file"
+        return 0
+    fi
+
+    echo "❌ Download failed: $display_name"
+    echo "   URL      : $download_url"
+    echo "   Output   : $output_dir"
+    echo "   Details  :"
+    tail -n 10 "$log_file" | sed 's/^/     /'
+    rm -f "$log_file"
+    exit 1
+}
+
 # ================================================================
 #  参数解析
 # ================================================================
@@ -398,7 +424,7 @@ for DEP in $DEPENDENCIES; do
         fi
         
         echo " -> Downloading $DEP from $DOWNLOAD_URL..."
-        wget --no-check-certificate -P "$TMP_DIR" "$DOWNLOAD_URL"
+        download_with_error "$DOWNLOAD_URL" "$TMP_DIR" "$DEP"
     fi
 done
 # ── 1.3 基础操作系统镜像 ───────────────────────────────────────
@@ -446,7 +472,7 @@ with open('$URL_FILE') as f:
     # 下载镜像离线包（如已存在则跳过）
     if [ ! -f "$IMG_PATH" ]; then
         echo " -> Downloading $IMG_FILENAME ..."
-        wget --no-check-certificate -P "$TMP_DIR" "$IMG_URL"
+        download_with_error "$IMG_URL" "$TMP_DIR" "$IMG_FILENAME"
     else
         echo " -> Offline image package already cached."
     fi
@@ -582,7 +608,7 @@ else
 
 	if [ ! -f "$TMP_DIR/$PY_FILENAME" ]; then
 		echo " -> Downloading Python source: $PY_FILENAME"
-		wget --no-check-certificate -P "$TMP_DIR" "$PY_SOURCE_URL"
+		download_with_error "$PY_SOURCE_URL" "$TMP_DIR" "$PY_FILENAME"
 	else
 		echo " -> Python source already cached: $PY_FILENAME"
 	fi
