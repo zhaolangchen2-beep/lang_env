@@ -10,10 +10,10 @@
 #   Step 4   : 拉起容器
 #
 # 用法：
-#   ./deploy.sh <module_name> <python_version>
+#   ./deploy.sh -m <module_name> -v <python_version>
 #
 # 示例：
-#   ./deploy.sh spark 3.11.9
+#   ./deploy.sh -m spark -v 3.11.9
 #
 # 依赖文件：
 #   conf.yaml                  — 全局配置（代理、Docker 版本、Python 编译参数等）
@@ -112,6 +112,14 @@ SKIP_PY_PKG=""  # 存储本地 Python 镜像 tar 包路径
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -m|--module)
+            MODULE_NAME="$2"
+            shift 2
+            ;;
+        -v|--version)
+            PYTHON_VERSION="$2"
+            shift 2
+            ;;
 		--skip-py-build|--skip-build)
             SKIP_PY_BUILD=true
             if [[ $# -gt 1 && ! "$2" =~ ^- ]]; then
@@ -126,9 +134,13 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: ./deploy.sh [OPTIONS] <module_name> <python_version>"
+            echo "Usage: ./deploy.sh [OPTIONS] -m <module_name> -v <python_version>"
             echo ""
             echo "Options:"
+            echo "  -m, --module <name>"
+            echo "               Target module name, e.g. pyflink / pyspark / cpython."
+            echo "  -v, --version <version>"
+            echo "               Target Python version."
             echo "  --skip-build [tar] / --skip-py-build [tar]"
             echo "               Skip local Python build."
             echo "               With tar: docker load local image tar package."
@@ -140,10 +152,10 @@ while [[ $# -gt 0 ]]; do
             echo "               then use it as BASE_IMAGE for module build."
             echo ""
             echo "Examples:"
-            echo "  ./deploy.sh pyspark 3.14.2              # image layering mode (default)"
-            echo "  ./deploy.sh --compact pyspark 3.14.2    # compact binary-copy mode"
-            echo "  ./deploy.sh --skip-build pyspark 3.14.3 # pull prebuilt Python image"
-            echo "  ./deploy.sh --skip-build /tmp/cpython.tar pyspark 3.14.3"
+            echo "  ./deploy.sh -m pyspark -v 3.14.2"
+            echo "  ./deploy.sh --compact -m pyspark -v 3.14.2"
+            echo "  ./deploy.sh --skip-build -m pyspark -v 3.14.3"
+            echo "  ./deploy.sh --skip-build /tmp/cpython.tar -m pyspark -v 3.14.3"
             exit 0
             ;;
         -*)
@@ -152,16 +164,9 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            # 位置参数：依次为 module_name, python_version
-            if [ -z "$MODULE_NAME" ]; then
-                MODULE_NAME="$1"
-            elif [ -z "$PYTHON_VERSION" ]; then
-                PYTHON_VERSION="$1"
-            else
-                echo "❌ Too many arguments. Run './deploy.sh --help' for usage."
-                exit 1
-            fi
-            shift
+            echo "❌ Unexpected positional argument: $1"
+            echo "   Use -m <module_name> -v <python_version>."
+            exit 1
             ;;
     esac
 done
@@ -169,7 +174,7 @@ done
 # 校验必需参数
 if [ -z "$MODULE_NAME" ] || [ -z "$PYTHON_VERSION" ]; then
     echo "❌ Missing required arguments."
-    echo "   Usage: ./deploy.sh [--compact] <module_name> <python_version>"
+    echo "   Usage: ./deploy.sh [OPTIONS] -m <module_name> -v <python_version>"
     exit 1
 fi
 

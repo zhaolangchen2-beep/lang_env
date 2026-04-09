@@ -75,8 +75,8 @@ python_build:
 使用 `deploy.sh` 脚本进行环境构建与部署：
 
 ```bash
-# 用法: ./deploy.sh <子模块名> <Python版本>
-./deploy.sh pyflink 3.14.2
+# 用法: ./deploy.sh -m <子模块名> -v <Python版本>
+./deploy.sh -m pyflink -v 3.14.2
 
 ```
 
@@ -93,10 +93,10 @@ python_build:
 
 ```bash
 # 方式一：从本地 tar 包导入
-./deploy.sh --skip-build /tmp/cpython.tar pyflink 3.14.3
+./deploy.sh --skip-build /tmp/cpython.tar -m pyflink -v 3.14.3
 
 # 方式二：根据 conf.yaml 中的模板直接 docker pull
-./deploy.sh --skip-build pyflink 3.14.3
+./deploy.sh --skip-build -m pyflink -v 3.14.3
 ```
 
 当 `--skip-build` 没有传入 tar 包路径时，脚本会读取 `conf.yaml` 中的 `python_build.prebuilt_image_template`，
