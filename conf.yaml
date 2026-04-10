@@ -14,7 +14,7 @@ python_build:
   #   {arch}            -> aarch64 / x86_64
   #   {python_version}  -> 3.14.3
   #   {python_mm}       -> 314 (由 major.minor 组成)
-  prebuilt_image_template: "ghcr.io/zhaolangchen2-beep/lang_env/oe2403sp1-devel-py{python_mm}-gcc14-{arch}:latest"
+  prebuilt_image_template: "ghcr.nju.edu.cn/zhaolangchen2-beep/lang_env/oe2403sp1-devel-py{python_mm}-gcc14-{arch}:latest"
   # 预编译参数，用于 deploy.sh 生成通用 Python
   cflags: "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
   ldflags: ""

@@ -66,7 +66,7 @@ configure_docker_daemon() {
     if write_file_if_changed /etc/docker/daemon.json << 'EOF'
 {
   "dns": ["8.8.8.8", "114.114.114.114"],
-  "insecure-registries": ["ghcr.io"]
+  "insecure-registries": ["ghcr.io", "ghcr.nju.edu.cn"]
 }
 EOF
     then
