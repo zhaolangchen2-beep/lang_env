@@ -42,12 +42,12 @@ services:
   # Spark Master节点
   spark-master:
     <<: *spark-base
-    container_name: spark-master
+    container_name: ${CONTAINER_PREFIX}-spark-master
     hostname: spark-master
     ports:
-      - "8080:8080"    # Master Web UI
-      - "7077:7077"    # Master通信端口
-      - "4040:4040"    # 第一个应用的Web UI
+      - "${HOST_PORT_MASTER_UI}:8080"    # Master Web UI
+      - "${HOST_PORT_MASTER_RPC}:7077"   # Master通信端口
+      - "${HOST_PORT_MASTER_APP_UI}:4040"    # 第一个应用的Web UI
     environment:
       # Master特定配置
       - SPARK_MODE=master
@@ -91,10 +91,10 @@ services:
   # Spark Worker节点 1
   spark-worker-1:
     <<: *spark-base
-    container_name: spark-worker-1
+    container_name: ${CONTAINER_PREFIX}-spark-worker-1
     hostname: spark-worker-1
     ports:
-      - "8081:8081"    # Worker 1 Web UI
+      - "${HOST_PORT_WORKER_1_UI}:8081"    # Worker 1 Web UI
     environment:
       # Worker特定配置
       - SPARK_MODE=worker
@@ -138,10 +138,10 @@ services:
   # Spark Worker节点 2
   spark-worker-2:
     <<: *spark-base
-    container_name: spark-worker-2
+    container_name: ${CONTAINER_PREFIX}-spark-worker-2
     hostname: spark-worker-2
     ports:
-      - "8082:8082"    # Worker 2 Web UI
+      - "${HOST_PORT_WORKER_2_UI}:8082"    # Worker 2 Web UI
     environment:
       # Worker特定配置
       - SPARK_MODE=worker
