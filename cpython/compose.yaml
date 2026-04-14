@@ -1,7 +1,7 @@
 services:
   cinderx:
     image: ${IMAGE_NAME}
-    container_name: cpython
+    container_name: ${CONTAINER_NAME}
     stdin_open: true  # 对应 -i
     tty: true         # 对应 -t
     restart: always

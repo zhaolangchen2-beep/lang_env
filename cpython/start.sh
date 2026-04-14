@@ -17,13 +17,43 @@ if ! docker info > /dev/null 2>&1; then
     sleep 5
 fi
 
-# 接收 deploy.sh 传来的镜像名
-if [ -z "$1" ]; then
-    echo "Usage: ./start.sh <image_name>"
+# 参数解析
+IMAGE_NAME=""
+PROJECT_NAME="cpython"
+CONTAINER_NAME="cpython"
+
+usage() {
+    echo "Usage: ./start.sh <image_name> [--project-name <name>]"
     exit 1
+}
+
+if [ $# -eq 0 ]; then
+    usage
 fi
 
-export IMAGE_NAME=$1
+IMAGE_NAME="$1"
+shift
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --project-name)
+            PROJECT_NAME="$2"
+            shift 2
+            ;;
+        *)
+            echo "❌ Unknown option: $1"
+            usage
+            ;;
+    esac
+done
+
+if [ "$PROJECT_NAME" != "cpython" ]; then
+    CONTAINER_NAME="${PROJECT_NAME}-cpython"
+fi
+
+export IMAGE_NAME
+export PROJECT_NAME
+export CONTAINER_NAME
 
 # 2. 健壮的镜像检测逻辑
 # 使用 --filter 确保精确匹配
@@ -37,9 +67,12 @@ else
     echo "✅ Image found (ID: $IF_EXISTS). Proceeding..."
 fi
 
-docker compose down --remove-orphans
-docker compose up -d
+echo "🚀 Starting cpython container..."
+echo "   Project name   : $PROJECT_NAME"
+echo "   Container name : $CONTAINER_NAME"
+docker compose -p "$PROJECT_NAME" down --remove-orphans
+docker compose -p "$PROJECT_NAME" up -d
 
 # 显示状态
 echo "📊 status:"
-docker compose ps
+docker compose -p "$PROJECT_NAME" ps
