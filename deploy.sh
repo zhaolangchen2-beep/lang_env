@@ -24,6 +24,7 @@
 # ================================================================
 
 set -e
+set -o pipefail
 
 # ────────────────────────────────────────────────────────────────
 # 全局路径常量
@@ -144,7 +145,7 @@ download_with_error() {
     fi
 
     log_file=$(mktemp)
-    if wget --no-check-certificate -P "$output_dir" "$download_url" >"$log_file" 2>&1; then
+    if wget --no-check-certificate --progress=bar:force -P "$output_dir" "$download_url" 2>&1 | tee "$log_file"; then
         rm -f "$log_file"
         return 0
     fi
@@ -517,12 +518,41 @@ fi
 echo "Step 2.5: Preparing Generic Python Environment (Containerized Build)..."
 
 # ── 2.5.1 校验 Python 版本是否在支持列表中 ────────────────────
-SUPPORTED_VERSIONS=$(python3 -c "
+SUPPORTED_VERSIONS=$(python3 - "$CONF_FILE" << 'PY'
+import sys
 import yaml
-print(' '.join(yaml.safe_load(open('$CONF_FILE'))['python_build']['supported_versions']))
-")
 
-if [[ ! " $SUPPORTED_VERSIONS " =~ " $PYTHON_VERSION " ]]; then
+conf_file = sys.argv[1]
+with open(conf_file, encoding="utf-8") as f:
+    data = yaml.safe_load(f) or {}
+
+versions = (data.get("python_build") or {}).get("supported_versions") or []
+if not isinstance(versions, list):
+    raise SystemExit("supported_versions must be a YAML list")
+
+print(", ".join(str(v).strip() for v in versions if str(v).strip()))
+PY
+)
+
+if [ $? -ne 0 ] || [ -z "$SUPPORTED_VERSIONS" ]; then
+    echo "❌ Error: Failed to parse python_build.supported_versions from $CONF_FILE"
+    exit 1
+fi
+
+python3 - "$CONF_FILE" "$PYTHON_VERSION" << 'PY'
+import sys
+import yaml
+
+conf_file, target_version = sys.argv[1:3]
+with open(conf_file, encoding="utf-8") as f:
+    data = yaml.safe_load(f) or {}
+
+versions = (data.get("python_build") or {}).get("supported_versions") or []
+normalized = [str(v).strip() for v in versions if str(v).strip()]
+sys.exit(0 if target_version in normalized else 1)
+PY
+
+if [ $? -ne 0 ]; then
     echo "❌ Error: Python $PYTHON_VERSION not in supported list: $SUPPORTED_VERSIONS"
     exit 1
 fi
