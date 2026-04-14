@@ -19,4 +19,5 @@ python_build:
   cflags: "-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer"
   ldflags: ""
   configure_args: "--enable-optimizations --with-lto"
-  install_dir: "/tmp/lang_test/python_dist"
+  # 为空时不传 --prefix，CPython 将按默认行为安装到 /usr/local
+  install_prefix: ""

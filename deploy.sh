@@ -624,12 +624,15 @@ else
 	CFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['cflags']")
 	LDFLAGS_VAL=$(get_yaml_val "$CONF_FILE" "['python_build']['ldflags']")
 	CONFIG_ARGS=$(get_yaml_val "$CONF_FILE" "['python_build']['configure_args']")
-	PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_prefix']")
+	PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_prefix']" || true)
 	if [ "$PYTHON_INSTALL_PREFIX" = "None" ] || [ -z "$PYTHON_INSTALL_PREFIX" ]; then
-		PYTHON_INSTALL_PREFIX=$(get_yaml_val "$CONF_FILE" "['python_build']['install_dir']")
-	fi
-	if [ "$PYTHON_INSTALL_PREFIX" = "None" ] || [ -z "$PYTHON_INSTALL_PREFIX" ]; then
-		PYTHON_INSTALL_PREFIX="/opt/python"
+		PYTHON_INSTALL_PREFIX=""
+		PYTHON_EFFECTIVE_PREFIX="/usr/local"
+		PYTHON_CONFIGURE_PREFIX_ARG=""
+		echo " -> install_prefix not set, using CPython default install prefix: $PYTHON_EFFECTIVE_PREFIX"
+	else
+		PYTHON_EFFECTIVE_PREFIX="$PYTHON_INSTALL_PREFIX"
+		PYTHON_CONFIGURE_PREFIX_ARG="--prefix=${PYTHON_INSTALL_PREFIX}"
 	fi
 
 	# ── 2.5.3 确保 Python 源码包已下载 ───────────────────────────
@@ -650,7 +653,7 @@ else
 
 		echo "    Mode             = $([ "$COMPACT_MODE" = true ] && echo 'compact (multi-stage, small)' || echo 'default (single-stage, with build tools)')"
 		echo "    BASE_OS          = $BASE_OS"
-		echo "    INSTALL_PREFIX   = $PYTHON_INSTALL_PREFIX"
+		echo "    INSTALL_PREFIX   = $PYTHON_EFFECTIVE_PREFIX"
 		echo "    CFLAGS           = $CFLAGS_VAL"
 		echo "    LDFLAGS          = $LDFLAGS_VAL"
 		echo "    configure args   = $CONFIG_ARGS"
@@ -666,7 +669,8 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS builder
 
 ARG PYTHON_VERSION
-ARG PYTHON_INSTALL_PREFIX
+ARG PYTHON_EFFECTIVE_PREFIX
+ARG PYTHON_CONFIGURE_PREFIX_ARG
 ARG CFLAGS_VAL
 ARG LDFLAGS_VAL
 ARG CONFIG_ARGS
@@ -695,7 +699,7 @@ COPY tmp/${PY_FILENAME} /tmp/src/${PY_FILENAME}
 RUN cd /tmp/src && \
 	tar xf ${PY_FILENAME} && \
 	cd Python-${PYTHON_VERSION} && \
-	./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
+	./configure ${PYTHON_CONFIGURE_PREFIX_ARG} ${CONFIG_ARGS} > /dev/null && \
 	make -j$(nproc) > /dev/null && \
 	make install > /dev/null && \
 	rm -rf /tmp/src
@@ -704,7 +708,7 @@ RUN cd /tmp/src && \
 FROM ${BASE_IMAGE}
 
 ARG PYTHON_VERSION
-ARG PYTHON_INSTALL_PREFIX
+ARG PYTHON_EFFECTIVE_PREFIX
 ARG PROXY
 ENV http_proxy=${PROXY} \
 	https_proxy=${PROXY} \
@@ -716,16 +720,16 @@ RUN echo "sslverify=false" >> /etc/yum.conf && \
 		libffi xz-libs libuuid libzstd && \
 	yum clean all
 
-COPY --from=builder ${PYTHON_INSTALL_PREFIX} ${PYTHON_INSTALL_PREFIX}
+COPY --from=builder ${PYTHON_EFFECTIVE_PREFIX} ${PYTHON_EFFECTIVE_PREFIX}
 
-ENV PATH="${PYTHON_INSTALL_PREFIX}/bin:${PATH}" \
-	LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
+ENV PATH="${PYTHON_EFFECTIVE_PREFIX}/bin:${PATH}" \
+	LD_LIBRARY_PATH="${PYTHON_EFFECTIVE_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
 RUN python3 --version && pip3 --version
 
 LABEL description="CPython ${PYTHON_VERSION} compact (runtime only)" \
 	  python.version="${PYTHON_VERSION}" \
-	  python.prefix="${PYTHON_INSTALL_PREFIX}"
+	  python.prefix="${PYTHON_EFFECTIVE_PREFIX}"
 DOCKERFILE_EOF
 
 		else
@@ -736,7 +740,8 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 ARG PYTHON_VERSION
-ARG PYTHON_INSTALL_PREFIX
+ARG PYTHON_EFFECTIVE_PREFIX
+ARG PYTHON_CONFIGURE_PREFIX_ARG
 ARG CFLAGS_VAL
 ARG LDFLAGS_VAL
 ARG CONFIG_ARGS
@@ -765,19 +770,19 @@ COPY tmp/${PY_FILENAME} /tmp/src/${PY_FILENAME}
 RUN cd /tmp/src && \
 	tar xf ${PY_FILENAME} && \
 	cd Python-${PYTHON_VERSION} && \
-	./configure --prefix=${PYTHON_INSTALL_PREFIX} ${CONFIG_ARGS} > /dev/null && \
+	./configure ${PYTHON_CONFIGURE_PREFIX_ARG} ${CONFIG_ARGS} > /dev/null && \
 	make -j$(nproc) > /dev/null && \
 	make install > /dev/null && \
 	rm -rf /tmp/src
 
-ENV PATH="${PYTHON_INSTALL_PREFIX}/bin:${PATH}" \
-	LD_LIBRARY_PATH="${PYTHON_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH}"
+ENV PATH="${PYTHON_EFFECTIVE_PREFIX}/bin:${PATH}" \
+	LD_LIBRARY_PATH="${PYTHON_EFFECTIVE_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
 RUN python3 --version && pip3 --version
 
 LABEL description="CPython ${PYTHON_VERSION} full (with build tools)" \
 	  python.version="${PYTHON_VERSION}" \
-	  python.prefix="${PYTHON_INSTALL_PREFIX}"
+	  python.prefix="${PYTHON_EFFECTIVE_PREFIX}"
 DOCKERFILE_EOF
 		fi
 
@@ -786,7 +791,8 @@ DOCKERFILE_EOF
 			-f "$CPYTHON_DOCKERFILE" \
 			--build-arg BASE_IMAGE="$BASE_OS" \
 			--build-arg PYTHON_VERSION="$PYTHON_VERSION" \
-			--build-arg PYTHON_INSTALL_PREFIX="$PYTHON_INSTALL_PREFIX" \
+			--build-arg PYTHON_EFFECTIVE_PREFIX="$PYTHON_EFFECTIVE_PREFIX" \
+			--build-arg PYTHON_CONFIGURE_PREFIX_ARG="$PYTHON_CONFIGURE_PREFIX_ARG" \
 			--build-arg CFLAGS_VAL="$CFLAGS_VAL" \
 			--build-arg LDFLAGS_VAL="$LDFLAGS_VAL" \
 			--build-arg CONFIG_ARGS="$CONFIG_ARGS" \
